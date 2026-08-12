@@ -1,5 +1,7 @@
-from discord import Activity, ActivityType, Interaction, app_commands
-from discord.ext import commands
+import inspect
+
+from discord import Activity, ActivityType, Color, Embed, Interaction, app_commands
+from discord.ext import commands, tasks
 
 from chii import Config
 from chii.utils import CustomChecks, Logger
@@ -34,6 +36,35 @@ class ClientCog(Logger, commands.GroupCog, group_name="client"):
         await interaction.response.send_message(f"Status changed to: {activity_type.title()} **{activity_message}**.")
 
         self.logger.info(f"Bot's status has been changed to: {activity_type.title()} {activity_message}")
+
+    @app_commands.command(name="tasks", description="List all background tasks the bot is running and when they'll next run.")
+    @app_commands.check(predicate=CustomChecks.is_bot_owner)
+    async def client_tasks(self, interaction: Interaction) -> None:
+        embed = Embed(title="Background Tasks")
+        color = Color.ash_embed()
+
+        for cog_name, cog in self.bot.cogs.items():
+            loops = inspect.getmembers(cog, predicate=lambda member: isinstance(member, tasks.Loop))
+
+            for loop_name, loop in loops:
+                next_iteration = loop.next_iteration
+                next_run = f"<t:{int(next_iteration.timestamp())}:R>" if next_iteration else "Not scheduled"
+
+                embed.add_field(
+                    name=f"{cog_name}.{loop_name}",
+                    value=f"Running: **{loop.is_running()}**\nNext Run: {next_run}",
+                    inline=False,
+                )
+
+        if not embed.fields:
+            color = Color.red()
+            embed.description = "No background tasks are currently registered."
+
+        embed.color = color
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        self.logger.info(f"Listed background tasks for @{interaction.user.global_name} ({interaction.user.id})")
 
 
 async def setup(bot: commands.Bot) -> None:
