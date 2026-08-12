@@ -492,8 +492,8 @@ class AniListCog(Logger, commands.GroupCog, group_name="anilist"):
 
         status_color_map = {
             MediaStatus.COMPLETED: Color.green(),
-            MediaStatus.DROPPED: Color.orange(),
-            MediaStatus.PAUSED: Color.red(),
+            MediaStatus.DROPPED: Color.red(),
+            MediaStatus.PAUSED: Color.orange(),
         }
 
         if status in status_color_map:
@@ -501,14 +501,13 @@ class AniListCog(Logger, commands.GroupCog, group_name="anilist"):
             color = status_color_map[status]
         else:
             progress = self._extract_progress(activity)
-            color = Color.ash_theme()
+            color = Color.ash_embed()
 
-        day_suffix = "day" if anilist_user.current_streak == 1 else "days"
         media_path = "anime" if media["type"] == "ANIME" else "manga"
 
         parts = [
             f"{(status.value if status else 'Unknown')}: **{progress}**\n" if progress else None,
-            f"Current Streak: **{anilist_user.current_streak}** {day_suffix}\n\n",
+            f"Current Streak: **{anilist_user.current_streak}** {'day' if anilist_user.current_streak == 1 else 'days'}\n\n",
             f"[**AniList**](https://anilist.co/{media_path}/{media['id']}) | ",
             f"[**MyAnimeList**](https://myanimelist.net/{media_path}/{media['idMal']})\n\n",
             f"<t:{activity['createdAt']}:R>",
