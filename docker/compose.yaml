@@ -1,0 +1,15 @@
+services:
+  chii:
+    image: ghcr.io/motxi/chii:latest
+    container_name: chii
+
+    env_file:
+      - .env
+
+    volumes:
+      # Host-side paths (left-side of colon) can be set to whatever you want.
+      # Only the container-side paths (right-side of colon) must be fixed.
+      - ./volumes/chii/state:/app/state
+      - ./volumes/chii/logs:/app/chii/logs
+
+    restart: unless-stopped

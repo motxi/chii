@@ -1,0 +1,41 @@
+# ------------
+# Git & GitHub
+# ------------
+
+.git/
+.github/
+
+# ------
+# Python
+# ------
+
+*.pyc
+
+.venv/
+.cache/
+__pycache__/
+
+# ---------------------
+# Environment & Secrets
+# ---------------------
+
+.env
+.env.*
+
+!.env.example
+
+# ------------
+# Runtime Data
+# ------------
+
+chii/logs
+chii/data/*.db
+
+# -----------------
+# Deployment & Docs
+# -----------------
+
+docker/
+
+README.md
+LICENSE.md

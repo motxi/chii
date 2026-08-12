@@ -1,0 +1,17 @@
+[
+    {
+        "label": "Debug Chii",
+
+        "request": "launch",
+        "adapter": "Debugpy",
+
+        "program": "$ZED_WORKTREE_ROOT/run.py",
+        "cwd": "$ZED_WORKTREE_ROOT",
+
+        "console": "integratedTerminal",
+
+        // If true, show and debug only user-written code.
+        // If false, show and debug all code, including library calls.
+        "justMyCode": false,
+    },
+]

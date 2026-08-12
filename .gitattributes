@@ -1,0 +1,6 @@
+# Auto-detect text files and always check them out with LF line endings,
+# regardless of each contributor's local `core.autocrlf` setting.
+#
+# Keeps line endings consistent across OSes, matches `.editorconfig`'s
+# `end_of_line = lf` and avoids diff noise from CRLF/LF mismatches.
+* text=auto eol=lf
