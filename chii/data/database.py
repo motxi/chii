@@ -4,7 +4,7 @@ from peewee import DatabaseProxy, SqliteDatabase
 
 from chii import Config
 
-default_database_name = "chii.dev.db" if Config.TEST_MODE else "chii.db"
+default_database_name = "chii.test.db" if Config.TEST_MODE else "chii.db"
 database_path = Path(Config.DB_PATH) if (Config.USE_DB_PATH and Config.DB_PATH) else Path(__file__).parent / "files" / default_database_name
 
 database_proxy = DatabaseProxy()
@@ -23,6 +23,7 @@ class Database:
             AniListUser,
             BotSettings,
             BotUser,
+            WaniKaniAuth,
             WaniKaniStats,
             WaniKaniUser,
         )
@@ -37,6 +38,7 @@ class Database:
                 BotSettings,
                 AniListUser,
                 AniListTracker,
+                WaniKaniAuth,
                 WaniKaniUser,
                 WaniKaniStats,
             ]

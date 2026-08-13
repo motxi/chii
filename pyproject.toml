@@ -1,6 +1,6 @@
 [project]
 name = "chii"
-version = "1.1.0"
+version = "1.2.0"
 description = "Love Chii"
 
 readme = "README.md"
@@ -13,6 +13,7 @@ dependencies = [
     "discord-py>=2.7.1",
     "peewee>=4.3.0",
     "python-dotenv>=1.2.2",
+    "tzdata>=2026.3",
 ]
 
 [dependency-groups]
@@ -60,5 +61,6 @@ reportImplicitStringConcatenation = false
 reportIncompatibleVariableOverride = false
 reportUnusedCallResult = false
 reportUnannotatedClassAttribute = false
+reportUnknownArgumentType = false
 reportUnknownMemberType = false
 reportUnknownVariableType = false

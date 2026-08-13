@@ -1,3 +1,4 @@
+import datetime
 import os
 import typing
 
@@ -26,6 +27,12 @@ class EnvParser:
             return EnvParser._safe_cast(cast, value)
 
         return None
+
+    @staticmethod
+    def parse_time(value: str) -> datetime.time:
+        hour, _, minute = value.partition(":")
+
+        return datetime.time(hour=int(hour), minute=int(minute))
 
     @staticmethod
     def _parse_bool(value: str) -> bool:
