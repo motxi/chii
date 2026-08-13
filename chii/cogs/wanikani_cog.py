@@ -75,7 +75,7 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
         await self._run_hourly_check()
         self.logger.debug("WaniKani hourly update loop task finished")
 
-    @tasks.loop(time=datetime.time(hour=23, minute=59, tzinfo=ZoneInfo(Config.WANIKANI_TIMEZONE)))
+    @tasks.loop(time=Config.WANIKANI_DAILY_SUMMARY_TIME.replace(tzinfo=ZoneInfo(Config.WANIKANI_TIMEZONE)))
     async def daily_summary_task(self) -> None:
         self.logger.debug("Running WaniKani daily summary task")
         await self._run_daily_summary()
@@ -287,6 +287,7 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
 
         wanikani_stats.last_review_notified_at = now
         wanikani_stats.last_lesson_notified_at = now
+
         wanikani_stats.save()
 
         if not review_count and not lesson_count:

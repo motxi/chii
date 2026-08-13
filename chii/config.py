@@ -1,3 +1,5 @@
+import datetime
+
 import dotenv
 
 from chii.utils import EnvParser
@@ -14,6 +16,7 @@ class Config:
 
     ANILIST_UPDATE_LOOP_TIME_SECONDS = EnvParser.read_env_nullable(float, "ANILIST_CHECK_LOOP_TIME") or 600.0
     WANIKANI_UPDATE_LOOP_TIME_SECONDS = EnvParser.read_env_nullable(float, "WANIKANI_UPDATE_LOOP_TIME_SECONDS") or 3600.0
+    WANIKANI_DAILY_SUMMARY_TIME = EnvParser.read_env_nullable(EnvParser.parse_time, "WANIKANI_DAILY_SUMMARY_TIME") or datetime.time(23, 59)
     WANIKANI_TIMEZONE = EnvParser.read_env_nullable(str, "WANIKANI_TIMEZONE") or "Europe/Madrid"
 
     ENABLE_CONSOLE_LOGGING = EnvParser.read_env_nullable(bool, "ENABLE_CONSOLE_LOGGING") or False
