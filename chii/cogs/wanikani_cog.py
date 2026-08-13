@@ -54,7 +54,7 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
     @typing.override
     async def cog_load(self) -> None:
         self.session = aiohttp.ClientSession()
-        self.hourly_update_loop_task.start()
+        self.update_loop_task.start()
         self.daily_summary_task.start()
 
         self.logger.info(f"{self.__class__.__name__} loaded, HTTP session opened and update tasks started")
@@ -62,7 +62,7 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
     @typing.override
     async def cog_unload(self) -> None:
         self.logger.debug("Cancelling WaniKani update tasks")
-        self.hourly_update_loop_task.cancel()
+        self.update_loop_task.cancel()
         self.daily_summary_task.cancel()
         self.logger.debug("WaniKani update tasks cancelled")
 
@@ -74,10 +74,10 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
             self.session = None
 
     @tasks.loop(seconds=Config.WANIKANI_UPDATE_LOOP_TIME_SECONDS)
-    async def hourly_update_loop_task(self) -> None:
-        self.logger.debug("Running WaniKani hourly update loop task")
-        await self._run_hourly_check()
-        self.logger.debug("WaniKani hourly update loop task finished")
+    async def update_loop_task(self) -> None:
+        self.logger.debug("Running WaniKani update loop task")
+        await self._run_update_loop()
+        self.logger.debug("WaniKani update loop task finished")
 
     @tasks.loop(time=Config.WANIKANI_DAILY_SUMMARY_TIME.replace(tzinfo=ZoneInfo(Config.WANIKANI_TIMEZONE)))
     async def daily_summary_task(self) -> None:
@@ -175,7 +175,7 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
         try:
             async with asyncio.timeout(Config.COMMAND_TIMEOUT_SECONDS):
                 self.logger.info(f"Manually forcing WaniKani update for @{interaction.user.global_name}")
-                await self._check_user_hourly(notification_channel, wanikani_user)
+                await self._check_user_update(notification_channel, wanikani_user)
 
         except TimeoutError:
             self.logger.exception("Manually forcing WaniKani update timed out")
@@ -248,7 +248,7 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
 
         return WaniKaniUser.get_or_none(bot_user=bot_user)
 
-    async def _run_hourly_check(self) -> None:
+    async def _run_update_loop(self) -> None:
         self.logger.debug("Finding WaniKani users to check for updates")
         wanikani_users = list(WaniKaniUser.select())
         self.logger.debug(f"Found {len(wanikani_users)} WaniKani users to check for updates")
@@ -264,14 +264,14 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
             self.logger.warning("Invalid WaniKani notification channel, skipping update cycle")
             return
 
-        self.logger.info(f"Running WaniKani hourly update cycle for {len(wanikani_users)} users")
+        self.logger.info(f"Running WaniKani update cycle for {len(wanikani_users)} users")
 
         for wanikani_user in wanikani_users:
-            await self._check_user_hourly(notification_channel, wanikani_user)
+            await self._check_user_update(notification_channel, wanikani_user)
 
-        self.logger.info(f"WaniKani hourly update cycle completed for {len(wanikani_users)} users")
+        self.logger.info(f"WaniKani update cycle completed for {len(wanikani_users)} users")
 
-    async def _check_user_hourly(self, channel: TextChannel, wanikani_user: WaniKaniUser) -> None:
+    async def _check_user_update(self, channel: TextChannel, wanikani_user: WaniKaniUser) -> None:
         wanikani_stats: WaniKaniStats
         wanikani_stats, _ = WaniKaniStats.get_or_create(wanikani_user=wanikani_user)
 
@@ -298,11 +298,11 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
             self.logger.debug(f'No new WaniKani activity for "{wanikani_user.username}"')
             return
 
-        embed = self._build_hourly_embed(wanikani_user, review_count, lesson_count)
+        embed = self._build_update_embed(wanikani_user, review_count, lesson_count)
 
-        self.logger.debug(f'Posting WaniKani hourly update for "{wanikani_user.username}" to #{channel.name}')
+        self.logger.debug(f'Posting WaniKani update for "{wanikani_user.username}" to #{channel.name}')
         await channel.send(embed=embed)
-        self.logger.info(f'Posted WaniKani hourly update for "{wanikani_user.username}" to #{channel.name}')
+        self.logger.info(f'Posted WaniKani update for "{wanikani_user.username}" to #{channel.name}')
 
     async def _run_daily_summary(self) -> None:
         self.logger.debug("Finding WaniKani users for daily summary")
@@ -402,7 +402,7 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
 
         return new_current, new_longest
 
-    def _build_hourly_embed(self, wanikani_user: WaniKaniUser, review_count: int, lesson_count: int) -> Embed:
+    def _build_update_embed(self, wanikani_user: WaniKaniUser, review_count: int, lesson_count: int) -> Embed:
         parts = [
             f"Reviews: **{review_count}**\n" if review_count else None,
             f"Lessons: **{lesson_count}**\n" if lesson_count else None,
