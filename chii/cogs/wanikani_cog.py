@@ -89,10 +89,7 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
         settings.wanikani_channel_id = channel.id
         settings.save()
 
-        await interaction.response.send_message(
-            f"WaniKani notification channel set to {channel.mention}.",
-            ephemeral=True,
-        )
+        await interaction.response.send_message(f"WaniKani notification channel set to {channel.mention}.", ephemeral=True)
 
         self.logger.info(f"WaniKani notification channel set to {channel.id}")
 
@@ -440,11 +437,7 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
         if lesson.streak_broke:
             lesson_line += " — streak broken!"
 
-        embed = Embed(
-            color=color,
-            title=f"{wanikani_user.username}'s Daily WaniKani Summary",
-            description=f"{review_line}\n{lesson_line}",
-        )
+        embed = Embed(color=color, title=f"{wanikani_user.username}'s Daily WaniKani Summary", description=f"{review_line}\n{lesson_line}")
 
         embed.set_author(name=wanikani_user.username, url=f"https://www.wanikani.com/users/{wanikani_user.username}")
 

@@ -90,10 +90,7 @@ class AniListCog(Logger, commands.GroupCog, group_name="anilist"):
         settings.anilist_channel_id = channel.id
         settings.save()
 
-        await interaction.response.send_message(
-            f"AniList notification channel set to {channel.mention}.",
-            ephemeral=True,
-        )
+        await interaction.response.send_message(f"AniList notification channel set to {channel.mention}.", ephemeral=True)
 
         self.logger.info(f"AniList notification channel set to {channel.id}")
 
