@@ -22,7 +22,7 @@ dev = [
 ]
 
 [tool.ruff]
-line-length = 140
+line-length = 160
 cache-dir = ".cache/ruff"
 
 [tool.ruff.lint]
