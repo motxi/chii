@@ -50,6 +50,10 @@ ignore = [
     "F403", # undefined-local-with-import-star
 ]
 
+"wanikani_cog.py" = [
+    "S105", # hardcoded-password-string
+]
+
 [tool.basedpyright]
 include = ["chii"]
 

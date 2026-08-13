@@ -15,6 +15,7 @@ from chii.utils import CustomChecks, Logger, SimpleUtils, T_Json
 WANIKANI_BASE_URL = "https://api.wanikani.com/v2"
 WANIKANI_API_REVISION = "20170710"
 WANIKANI_MAX_PAGES = 20
+WANIKANI_TOKEN_SETTINGS_URL = "https://www.wanikani.com/settings/personal_access_tokens"
 
 
 class Summary(typing.NamedTuple):
@@ -30,8 +31,9 @@ class Summary(typing.NamedTuple):
 
 
 class WaniKaniLinkModal(ui.Modal, title="Link WaniKani Account"):
-    token_label: ui.Label[WaniKaniLinkModal] = ui.Label(
-        text="WaniKani API Token (Read-only)",
+    token_info = ui.TextDisplay(content=f"Click [Here]({WANIKANI_TOKEN_SETTINGS_URL}) to Generate a Read-Only Token")
+    token_label = ui.Label(
+        text="WaniKani API Token",
         component=ui.TextInput(placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", required=True, max_length=100),
     )
 
