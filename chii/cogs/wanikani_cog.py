@@ -23,21 +23,25 @@ class DailyMetric(typing.NamedTuple):
 
 
 class WaniKaniLinkModal(ui.Modal, title="Link WaniKani Account"):
+    token_label: ui.Label[WaniKaniLinkModal] = ui.Label(
+        text="WaniKani API Token (Read-only)",
+        component=ui.TextInput(placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", required=True, max_length=100),
+    )
+
     def __init__(self, cog: WaniKaniCog) -> None:
         super().__init__()
 
         self.cog: WaniKaniCog = cog
 
-        self.token_label: ui.Label[WaniKaniLinkModal] = ui.Label(
-            text="WaniKani API Token (Read-only)",
-            component=ui.TextInput(placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", required=True, max_length=100),
-        )
-
     @typing.override
     async def on_submit(self, interaction: Interaction) -> None:
         await interaction.response.defer(ephemeral=True)
 
-        token_input = typing.cast("ui.TextInput[WaniKaniLinkModal]", self.token_label.component)
+        token_input = self.token_label.component
+
+        if not isinstance(token_input, ui.TextInput):
+            message = "Expected the link modal's component to be a TextInput"
+            raise TypeError(message)
 
         await self.cog.link_wanikani_account(interaction, token_input.value.strip())
 
