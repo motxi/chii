@@ -411,7 +411,9 @@ class AniListCog(Logger, commands.GroupCog, group_name="anilist"):
 
         self.logger.debug(f"Creating AniListTracker entry for media {media['id']}")
 
-        tracker, created = AniListTracker.get_or_create(
+        anilist_tracker: AniListTracker
+        anilist_tracker_exists: AniListTracker
+        anilist_tracker, anilist_tracker_exists = AniListTracker.get_or_create(
             media_id=media["id"],
             anilist_user=account,
             defaults={
@@ -420,7 +422,7 @@ class AniListCog(Logger, commands.GroupCog, group_name="anilist"):
             },
         )
 
-        if created:
+        if anilist_tracker_exists:
             self.logger.debug(f"Created new AniListTracker entry for media {media['id']}")
 
         if new_progress is None:
@@ -432,10 +434,10 @@ class AniListCog(Logger, commands.GroupCog, group_name="anilist"):
             else:
                 self.logger.debug("Activity has no numeric progress and it is not supported")
 
-        elif created or new_progress > tracker.progress:
+        elif anilist_tracker_exists or new_progress > anilist_tracker.progress:
             self.logger.info(f"Progress of media {media['id']} increased to {new_progress}")
 
-            tracker.progress = new_progress
+            anilist_tracker.progress = new_progress
             is_progress = True
 
         else:
@@ -445,10 +447,10 @@ class AniListCog(Logger, commands.GroupCog, group_name="anilist"):
         if not is_progress:
             return False
 
-        tracker.type = media["type"]
-        tracker.title = media["title"]["romaji"]
+        anilist_tracker.type = media["type"]
+        anilist_tracker.title = media["title"]["romaji"]
 
-        tracker.save()
+        anilist_tracker.save()
 
         return True
 

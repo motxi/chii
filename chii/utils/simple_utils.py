@@ -11,10 +11,10 @@ if typing.TYPE_CHECKING:
 class SimpleUtils:
     @staticmethod
     def get_bot_settings() -> BotSettings:
-        settings: BotSettings
-        settings, _created = BotSettings.get_or_create(id=1)
+        bot_settings: BotSettings
+        bot_settings, _ = BotSettings.get_or_create(id=1)
 
-        return settings
+        return bot_settings
 
     @staticmethod
     def get_channel(bot: commands.Bot, channel_id: int | None) -> TextChannel | None:
