@@ -23,6 +23,7 @@ class Database:
             AniListUser,
             BotSettings,
             BotUser,
+            WaniKaniAuth,
             WaniKaniStats,
             WaniKaniUser,
         )
@@ -37,6 +38,7 @@ class Database:
                 BotSettings,
                 AniListUser,
                 AniListTracker,
+                WaniKaniAuth,
                 WaniKaniUser,
                 WaniKaniStats,
             ]

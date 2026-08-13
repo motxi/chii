@@ -1,5 +1,14 @@
 from chii.data.database import Database
-from chii.data.models import AniListTracker, AniListUser, BaseModel, BotSettings, BotUser, WaniKaniStats, WaniKaniUser
+from chii.data.models import (
+    AniListTracker,
+    AniListUser,
+    BaseModel,
+    BotSettings,
+    BotUser,
+    WaniKaniAuth,
+    WaniKaniStats,
+    WaniKaniUser,
+)
 
 __all__ = [
     "AniListTracker",
@@ -8,6 +17,7 @@ __all__ = [
     "BotSettings",
     "BotUser",
     "Database",
+    "WaniKaniAuth",
     "WaniKaniStats",
     "WaniKaniUser",
 ]
