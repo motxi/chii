@@ -46,8 +46,8 @@ class WaniKaniStats(BaseModel):
 
     last_message_id = IntegerField(null=True)
 
-    review_current_streak = IntegerField(default=0)
-    review_longest_streak = IntegerField(default=0)
+    current_streak = IntegerField(default=0)
+    longest_streak = IntegerField(default=0)
 
     total_reviews = IntegerField(default=0)
 
@@ -55,9 +55,6 @@ class WaniKaniStats(BaseModel):
     # Separate from `last_review_at`, which the daily task owns.
     last_review_notified_at = DateTimeField(null=True)
     last_review_at = DateTimeField(null=True)
-
-    lesson_current_streak = IntegerField(default=0)
-    lesson_longest_streak = IntegerField(default=0)
 
     total_lessons = IntegerField(default=0)
 
