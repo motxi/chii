@@ -62,7 +62,7 @@ class ClientCog(Logger, commands.GroupCog, group_name="client"):
 
         embed.color = color
 
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message(embed=embed)
 
         self.logger.info(f"Listed background tasks for @{interaction.user.global_name} ({interaction.user.id})")
 
