@@ -68,6 +68,11 @@ async def main() -> None:
         Database.create_tables()
 
         logger.info("Starting bot")
-        await bot.start(Config.BOT_TOKEN, reconnect=True)
+
+        try:
+            await bot.start(Config.BOT_TOKEN, reconnect=True)
+        except Exception:
+            logger.exception("Bot crashed")
+            raise
 
         # Everything below this line is essentially no-op.
