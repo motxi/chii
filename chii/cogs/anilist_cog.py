@@ -55,6 +55,10 @@ class AniListCog(Logger, commands.GroupCog, group_name="anilist"):
         await self._run_update_loop()
         self.logger.debug("Update loop task finished")
 
+    @update_loop_task.before_loop
+    async def before_update_loop_task(self) -> None:
+        await self.bot.wait_until_ready()
+
     @app_commands.command(name="force", description="Manually force an AniList update check for all linked users.")
     @app_commands.check(predicate=CustomChecks.is_bot_owner)
     async def anilist_force(self, interaction: Interaction) -> None:
