@@ -15,16 +15,25 @@ from chii.utils import CustomChecks, Logger, SimpleUtils, T_Json
 WANIKANI_BASE_URL = "https://api.wanikani.com/v2"
 WANIKANI_API_REVISION = "20170710"
 WANIKANI_MAX_PAGES = 20
+WANIKANI_TOKEN_SETTINGS_URL = "https://www.wanikani.com/settings/personal_access_tokens"
 
 
-class DailyMetric(typing.NamedTuple):
-    amount: int
-    streak_broke: bool
+class Summary(typing.NamedTuple):
+    review_count: int
+    lesson_count: int
+
+    last_review_at: datetime.datetime | None
+    last_lesson_at: datetime.datetime | None
+
+    # Only tracked by the daily task.
+    # The hourly update loop does not touch streaks.
+    streak_broke: bool | None = None
 
 
 class WaniKaniLinkModal(ui.Modal, title="Link WaniKani Account"):
-    token_label: ui.Label[WaniKaniLinkModal] = ui.Label(
-        text="WaniKani API Token (Read-only)",
+    token_info = ui.TextDisplay(content=f"Click [here]({WANIKANI_TOKEN_SETTINGS_URL}) to generate a read-only token.")
+    token_label = ui.Label(
+        text="WaniKani API Token",
         component=ui.TextInput(placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", required=True, max_length=100),
     )
 
@@ -277,17 +286,35 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
 
         now = datetime.datetime.now(tz=datetime.UTC)
 
-        review_since = wanikani_stats.last_review_notified_at or now
-        lesson_since = wanikani_stats.last_lesson_notified_at or now
+        # Guard against clock skew between this host and WaniKani's servers.
+        #
+        # An `updated_after` timestamp equal to (or after) "now" is rejected
+        # with a 422.
+        safe_now = now - datetime.timedelta(seconds=10)
 
-        review_count = await self._count_reviews_since(wanikani_user.api_token, review_since)
+        review_since = wanikani_stats.last_review_notified_at or safe_now
+        lesson_since = wanikani_stats.last_lesson_notified_at or safe_now
+
+        review_items = await self._fetch_review_statistics_since(wanikani_user.api_token, review_since)
         lesson_items = await self._fetch_started_assignments_since(wanikani_user.api_token, lesson_since)
 
-        if review_count is None or lesson_items is None:
+        if review_items is None or lesson_items is None:
             self.logger.warning(f'Failed to fetch WaniKani data for "{wanikani_user.username}", skipping this check')
             return
 
+        review_count = len(review_items)
+        last_review_at = self._latest_review_at(review_items)
+
         lesson_count = len(lesson_items)
+        last_lesson_at = self._latest_lesson_at(lesson_items)
+
+        if review_count:
+            wanikani_stats.total_reviews += review_count
+            wanikani_stats.last_review_at = last_review_at
+
+        if lesson_count:
+            wanikani_stats.total_lessons += lesson_count
+            wanikani_stats.last_lesson_at = last_lesson_at
 
         wanikani_stats.last_review_notified_at = now
         wanikani_stats.last_lesson_notified_at = now
@@ -298,7 +325,14 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
             self.logger.debug(f'No new WaniKani activity for "{wanikani_user.username}"')
             return
 
-        embed = self._build_update_embed(wanikani_user, review_count, lesson_count)
+        summary = Summary(
+            review_count=review_count,
+            lesson_count=lesson_count,
+            last_review_at=last_review_at,
+            last_lesson_at=last_lesson_at,
+        )
+
+        embed = await self._build_update_embed(wanikani_user, summary)
 
         self.logger.debug(f'Posting WaniKani update for "{wanikani_user.username}" to #{channel.name}')
         await channel.send(embed=embed)
@@ -320,64 +354,46 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
             self.logger.warning("Invalid WaniKani notification channel, skipping daily summary")
             return
 
-        timezone = ZoneInfo(Config.WANIKANI_TIMEZONE)
-        now_local = datetime.datetime.now(tz=timezone)
-        start_of_today = now_local.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(datetime.UTC)
-
         self.logger.info(f"Running WaniKani daily summary for {len(wanikani_users)} users")
 
         for wanikani_user in wanikani_users:
-            await self._process_daily_user(notification_channel, wanikani_user, start_of_today)
+            await self._process_daily_user(notification_channel, wanikani_user)
 
         self.logger.info(f"WaniKani daily summary completed for {len(wanikani_users)} users")
 
-    async def _process_daily_user(self, channel: TextChannel, wanikani_user: WaniKaniUser, start_of_today: datetime.datetime) -> None:
+    async def _process_daily_user(self, channel: TextChannel, wanikani_user: WaniKaniUser) -> None:
         wanikani_stats: WaniKaniStats
         wanikani_stats, _ = WaniKaniStats.get_or_create(wanikani_user=wanikani_user)
 
-        review_count = await self._count_reviews_since(wanikani_user.api_token, start_of_today)
-        lesson_items = await self._fetch_started_assignments_since(wanikani_user.api_token, start_of_today)
+        # `total_reviews`/`total_lessons`/`last_review_at`/`last_lesson_at` are
+        # kept up to date continuously by the hourly loop, so today's counts can
+        # be derived from the snapshot taken at the previous daily summary
+        # instead of re-querying the WaniKani API.
+        review_count = wanikani_stats.total_reviews - wanikani_stats.total_reviews_day_start
+        lesson_count = wanikani_stats.total_lessons - wanikani_stats.total_lessons_day_start
 
-        if review_count is None or lesson_items is None:
-            self.logger.warning(f'Failed to fetch WaniKani daily data for "{wanikani_user.username}", skipping summary')
-            return
+        had_activity = review_count > 0 or lesson_count > 0
 
-        lesson_count = len(lesson_items)
+        streak_broke = not had_activity and wanikani_stats.current_streak > 0
 
-        review_had_activity = review_count > 0
-        lesson_had_activity = lesson_count > 0
-
-        review_broke = not review_had_activity and wanikani_stats.review_current_streak > 0
-        lesson_broke = not lesson_had_activity and wanikani_stats.lesson_current_streak > 0
-
-        wanikani_stats.review_current_streak, wanikani_stats.review_longest_streak = self._advance_streak(
-            wanikani_stats.review_current_streak,
-            wanikani_stats.review_longest_streak,
-            had_activity=review_had_activity,
+        wanikani_stats.current_streak, wanikani_stats.longest_streak = self._advance_streak(
+            wanikani_stats.current_streak,
+            wanikani_stats.longest_streak,
+            had_activity=had_activity,
         )
 
-        wanikani_stats.lesson_current_streak, wanikani_stats.lesson_longest_streak = self._advance_streak(
-            wanikani_stats.lesson_current_streak,
-            wanikani_stats.lesson_longest_streak,
-            had_activity=lesson_had_activity,
+        wanikani_stats.total_reviews_day_start = wanikani_stats.total_reviews
+        wanikani_stats.total_lessons_day_start = wanikani_stats.total_lessons
+
+        summary = Summary(
+            review_count=review_count,
+            lesson_count=lesson_count,
+            last_review_at=wanikani_stats.last_review_at,
+            last_lesson_at=wanikani_stats.last_lesson_at,
+            streak_broke=streak_broke,
         )
 
-        wanikani_stats.total_reviews += review_count
-        wanikani_stats.total_lessons += lesson_count
-
-        now = datetime.datetime.now(tz=datetime.UTC)
-
-        if review_had_activity:
-            wanikani_stats.last_review_at = now
-        if lesson_had_activity:
-            wanikani_stats.last_lesson_at = now
-
-        embed = self._build_daily_embed(
-            wanikani_user,
-            wanikani_stats,
-            DailyMetric(review_count, review_broke),
-            DailyMetric(lesson_count, lesson_broke),
-        )
+        embed = await self._build_daily_embed(wanikani_user, wanikani_stats, summary)
 
         old_message_id = wanikani_stats.last_message_id
 
@@ -402,49 +418,71 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
 
         return new_current, new_longest
 
-    def _build_update_embed(self, wanikani_user: WaniKaniUser, review_count: int, lesson_count: int) -> Embed:
+    def _latest_review_at(self, review_items: list[T_Json]) -> datetime.datetime | None:
+        return max(
+            (datetime.datetime.fromisoformat(item["data_updated_at"]) for item in review_items),
+            default=None,
+        )
+
+    def _latest_lesson_at(self, lesson_items: list[T_Json]) -> datetime.datetime | None:
+        return max(
+            (datetime.datetime.fromisoformat(item["data"]["started_at"]) for item in lesson_items),
+            default=None,
+        )
+
+    async def _set_wanikani_author(self, embed: Embed, wanikani_user: WaniKaniUser) -> None:
+        user = await self.bot.fetch_user(wanikani_user.bot_user.discord_id)
+
+        author_name = f"{wanikani_user.username} (@{user.global_name})" if user else wanikani_user.username
+        author_icon = user.display_avatar.url if user else None
+
+        embed.set_author(
+            name=author_name,
+            url=f"https://www.wanikani.com/users/{wanikani_user.username}",
+            icon_url=author_icon,
+        )
+
+    async def _build_update_embed(self, wanikani_user: WaniKaniUser, summary: Summary) -> Embed:
+        lessons_line = f"Lessons: **{summary.lesson_count}**"
+
+        if summary.review_count:
+            lessons_line = f"\n{lessons_line}"
+
         parts = [
-            f"Reviews: **{review_count}**\n" if review_count else None,
-            f"Lessons: **{lesson_count}**\n" if lesson_count else None,
+            f"Reviews: **{summary.review_count}**" if summary.review_count else None,
+            lessons_line if summary.lesson_count else None,
+            f"\n\nLast Review: <t:{int(summary.last_review_at.timestamp())}:R>" if summary.review_count and summary.last_review_at else None,
         ]
 
         embed = Embed(
             color=Color.ash_embed(),
-            title=f"{wanikani_user.username}'s WaniKani Update",
+            title="WaniKani Update",
             description="".join(part for part in parts if part),
         )
 
-        embed.set_author(name=wanikani_user.username, url=f"https://www.wanikani.com/users/{wanikani_user.username}")
+        await self._set_wanikani_author(embed, wanikani_user)
 
         return embed
 
-    def _build_daily_embed(self, wanikani_user: WaniKaniUser, stats: WaniKaniStats, review: DailyMetric, lesson: DailyMetric) -> Embed:
-        if review.streak_broke and lesson.streak_broke:
-            color = Color.red()
-        elif review.streak_broke or lesson.streak_broke:
-            color = Color.orange()
-        else:
-            color = Color.green()
+    async def _build_daily_embed(self, wanikani_user: WaniKaniUser, stats: WaniKaniStats, summary: Summary) -> Embed:
+        color = Color.red() if summary.streak_broke else Color.green()
 
-        review_line = (
-            f"Reviews: **{review.amount}** "
-            f"(streak: **{stats.review_current_streak}** {'day' if stats.review_current_streak == 1 else 'days'})"
-        )
+        streak_line = f"Streak: **{stats.current_streak}** {'day' if stats.current_streak == 1 else 'days'}"
 
-        if review.streak_broke:
-            review_line += " — streak broken!"
+        if summary.streak_broke:
+            streak_line += " — Streak Broken!"
 
-        lesson_line = (
-            f"Lessons: **{lesson.amount}** "
-            f"(streak: **{stats.lesson_current_streak}** {'day' if stats.lesson_current_streak == 1 else 'days'})"
-        )
+        parts = [
+            f"Reviews: **{summary.review_count}** (Total = **{stats.total_reviews}**)",
+            f"\nLessons: **{summary.lesson_count}** (Total = **{stats.total_lessons}**)",
+            f"\n\n{streak_line}",
+            f"\n\nLast Review: <t:{int(summary.last_review_at.timestamp())}:R>" if summary.review_count and summary.last_review_at else None,
+            f"\nLast Lesson: <t:{int(summary.last_lesson_at.timestamp())}:R>" if summary.lesson_count and summary.last_lesson_at else None,
+        ]
 
-        if lesson.streak_broke:
-            lesson_line += " — streak broken!"
+        embed = Embed(color=color, title="Daily WaniKani Summary", description="".join(part for part in parts if part))
 
-        embed = Embed(color=color, title=f"{wanikani_user.username}'s Daily WaniKani Summary", description=f"{review_line}\n{lesson_line}")
-
-        embed.set_author(name=wanikani_user.username, url=f"https://www.wanikani.com/users/{wanikani_user.username}")
+        await self._set_wanikani_author(embed, wanikani_user)
 
         return embed
 
@@ -487,15 +525,29 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
 
         return data.get("data")
 
-    async def _count_reviews_since(self, api_token: str, since: datetime.datetime) -> int | None:
-        self.logger.debug(f"Counting WaniKani reviews since {since.isoformat()}")
+    async def _fetch_review_statistics_since(self, api_token: str, since: datetime.datetime) -> list[T_Json] | None:
+        self.logger.debug(f"Fetching WaniKani review statistics since {since.isoformat()}")
 
-        data = await self._wanikani_get(api_token, f"{WANIKANI_BASE_URL}/reviews", params={"updated_after": since.isoformat()})
+        items = await self._paginate_wanikani(
+            api_token,
+            f"{WANIKANI_BASE_URL}/review_statistics",
+            {"updated_after": since.isoformat()},
+        )
 
-        if data is None:
+        if items is None:
             return None
 
-        return data.get("total_count", 0)
+        # A review_statistic is created on a subject's first review, and a
+        # subject can't be reviewed before its lesson is completed.
+        #
+        # WaniKani's official client submits that first review as the lesson's
+        # own quiz, so a "review_statistic" created within this window is really
+        # a lesson completion not a standalone review.
+        genuine_reviews = [item for item in items if datetime.datetime.fromisoformat(item["data"]["created_at"]) < since]
+
+        self.logger.debug(f"Found {len(genuine_reviews)} WaniKani reviews since {since.isoformat()}")
+
+        return genuine_reviews
 
     async def _fetch_started_assignments_since(self, api_token: str, since: datetime.datetime) -> list[T_Json] | None:
         self.logger.debug(f"Fetching WaniKani started assignments since {since.isoformat()}")

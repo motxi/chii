@@ -1,6 +1,6 @@
 [project]
 name = "chii"
-version = "1.2.1"
+version = "1.3.0"
 description = "Love Chii"
 
 readme = "README.md"
@@ -22,7 +22,7 @@ dev = [
 ]
 
 [tool.ruff]
-line-length = 140
+line-length = 160
 cache-dir = ".cache/ruff"
 
 [tool.ruff.lint]
@@ -48,6 +48,10 @@ ignore = [
 "__init__.py" = [
     "ASYNC240", # blocking-path-method-in-async-function
     "F403", # undefined-local-with-import-star
+]
+
+"wanikani_cog.py" = [
+    "S105", # hardcoded-password-string
 ]
 
 [tool.basedpyright]

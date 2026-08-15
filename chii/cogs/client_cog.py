@@ -1,4 +1,6 @@
 import inspect
+import platform
+import socket
 
 from discord import Activity, ActivityType, Color, Embed, Interaction, app_commands
 from discord.ext import commands, tasks
@@ -65,6 +67,19 @@ class ClientCog(Logger, commands.GroupCog, group_name="client"):
         await interaction.response.send_message(embed=embed)
 
         self.logger.info(f"Listed background tasks for @{interaction.user.global_name} ({interaction.user.id})")
+
+    @app_commands.command(name="host", description="Show which machine the bot is currently running on.")
+    @app_commands.check(predicate=CustomChecks.is_bot_owner)
+    async def client_host(self, interaction: Interaction) -> None:
+        embed = Embed(title="Host Info", color=Color.ash_embed())
+
+        embed.add_field(name="Hostname", value=socket.gethostname(), inline=False)
+        embed.add_field(name="Platform", value=platform.platform(), inline=False)
+        embed.add_field(name="Machine", value=platform.machine(), inline=False)
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        self.logger.info(f"Reported host info to @{interaction.user.global_name} ({interaction.user.id})")
 
 
 async def setup(bot: commands.Bot) -> None:

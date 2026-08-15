@@ -504,12 +504,17 @@ class AniListCog(Logger, commands.GroupCog, group_name="anilist"):
 
         media_path = "anime" if media["type"] == "ANIME" else "manga"
 
+        streak_line = f"Current Streak: **{anilist_user.current_streak}** {'day' if anilist_user.current_streak == 1 else 'days'}"
+
+        if progress:
+            streak_line = f"\n{streak_line}"
+
         parts = [
-            f"{(status.value if status else 'Unknown')}: **{progress}**\n" if progress else None,
-            f"Current Streak: **{anilist_user.current_streak}** {'day' if anilist_user.current_streak == 1 else 'days'}\n\n",
-            f"[**AniList**](https://anilist.co/{media_path}/{media['id']}) | ",
-            f"[**MyAnimeList**](https://myanimelist.net/{media_path}/{media['idMal']})\n\n",
-            f"<t:{activity['createdAt']}:R>",
+            f"{(status.value if status else 'Unknown')}: **{progress}**" if progress else None,
+            streak_line,
+            f"\n\n[**AniList**](https://anilist.co/{media_path}/{media['id']}) | ",
+            f"[**MyAnimeList**](https://myanimelist.net/{media_path}/{media['idMal']})",
+            f"\n\n<t:{activity['createdAt']}:R>",
         ]
 
         embed = Embed(color=color, title=title, description="".join(part for part in parts if part))

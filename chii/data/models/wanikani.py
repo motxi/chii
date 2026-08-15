@@ -46,20 +46,27 @@ class WaniKaniStats(BaseModel):
 
     last_message_id = IntegerField(null=True)
 
-    review_current_streak = IntegerField(default=0)
-    review_longest_streak = IntegerField(default=0)
+    current_streak = IntegerField(default=0)
+    longest_streak = IntegerField(default=0)
 
     total_reviews = IntegerField(default=0)
 
-    # Cursor for the hourly task, tracking what's already been notified about.
-    # Separate from `last_review_at`, which the daily task owns.
+    # Snapshot of `total_reviews` as of the last daily summary, so that task can
+    # derive "reviews done today" (total_reviews - total_reviews_day_start)
+    # without re-querying the WaniKani API.
+    total_reviews_day_start = IntegerField(default=0)
+
+    # `last_review_notified_at` is a cursor tracking what's already been
+    # notified about by the hourly task.
+    #
+    # `last_review_at` is also kept up to date by the hourly task (whenever new
+    # reviews are found) but is separate: it's read-only for the daily task,
+    # which uses it to recap the day rather than to decide what's new.
     last_review_notified_at = DateTimeField(null=True)
     last_review_at = DateTimeField(null=True)
 
-    lesson_current_streak = IntegerField(default=0)
-    lesson_longest_streak = IntegerField(default=0)
-
     total_lessons = IntegerField(default=0)
+    total_lessons_day_start = IntegerField(default=0)
 
     last_lesson_notified_at = DateTimeField(null=True)
     last_lesson_at = DateTimeField(null=True)
