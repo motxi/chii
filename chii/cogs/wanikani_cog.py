@@ -31,7 +31,7 @@ class Summary(typing.NamedTuple):
 
 
 class WaniKaniLinkModal(ui.Modal, title="Link WaniKani Account"):
-    token_info = ui.TextDisplay(content=f"Click [Here]({WANIKANI_TOKEN_SETTINGS_URL}) to Generate a Read-Only Token")
+    token_info = ui.TextDisplay(content=f"Click [here]({WANIKANI_TOKEN_SETTINGS_URL}) to generate a read-only token.")
     token_label = ui.Label(
         text="WaniKani API Token",
         component=ui.TextInput(placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", required=True, max_length=100),
@@ -295,17 +295,26 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
         review_since = wanikani_stats.last_review_notified_at or safe_now
         lesson_since = wanikani_stats.last_lesson_notified_at or safe_now
 
-        review_result = await self._count_reviews_since(wanikani_user.api_token, review_since)
+        review_items = await self._fetch_review_statistics_since(wanikani_user.api_token, review_since)
         lesson_items = await self._fetch_started_assignments_since(wanikani_user.api_token, lesson_since)
 
-        if review_result is None or lesson_items is None:
+        if review_items is None or lesson_items is None:
             self.logger.warning(f'Failed to fetch WaniKani data for "{wanikani_user.username}", skipping this check')
             return
 
-        review_count, last_review_at = review_result
-        lesson_count = len(lesson_items)
+        review_count = len(review_items)
+        last_review_at = self._latest_review_at(review_items)
 
+        lesson_count = len(lesson_items)
         last_lesson_at = self._latest_lesson_at(lesson_items)
+
+        if review_count:
+            wanikani_stats.total_reviews += review_count
+            wanikani_stats.last_review_at = last_review_at
+
+        if lesson_count:
+            wanikani_stats.total_lessons += lesson_count
+            wanikani_stats.last_lesson_at = last_lesson_at
 
         wanikani_stats.last_review_notified_at = now
         wanikani_stats.last_lesson_notified_at = now
@@ -345,35 +354,25 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
             self.logger.warning("Invalid WaniKani notification channel, skipping daily summary")
             return
 
-        timezone = ZoneInfo(Config.WANIKANI_TIMEZONE)
-        now_local = datetime.datetime.now(tz=timezone)
-        start_of_today = now_local.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(datetime.UTC)
-
         self.logger.info(f"Running WaniKani daily summary for {len(wanikani_users)} users")
 
         for wanikani_user in wanikani_users:
-            await self._process_daily_user(notification_channel, wanikani_user, start_of_today)
+            await self._process_daily_user(notification_channel, wanikani_user)
 
         self.logger.info(f"WaniKani daily summary completed for {len(wanikani_users)} users")
 
-    async def _process_daily_user(self, channel: TextChannel, wanikani_user: WaniKaniUser, start_of_today: datetime.datetime) -> None:
+    async def _process_daily_user(self, channel: TextChannel, wanikani_user: WaniKaniUser) -> None:
         wanikani_stats: WaniKaniStats
         wanikani_stats, _ = WaniKaniStats.get_or_create(wanikani_user=wanikani_user)
 
-        review_result = await self._count_reviews_since(wanikani_user.api_token, start_of_today)
-        lesson_items = await self._fetch_started_assignments_since(wanikani_user.api_token, start_of_today)
+        # `total_reviews`/`total_lessons`/`last_review_at`/`last_lesson_at` are
+        # kept up to date continuously by the hourly loop, so today's counts can
+        # be derived from the snapshot taken at the previous daily summary
+        # instead of re-querying the WaniKani API.
+        review_count = wanikani_stats.total_reviews - wanikani_stats.total_reviews_day_start
+        lesson_count = wanikani_stats.total_lessons - wanikani_stats.total_lessons_day_start
 
-        if review_result is None or lesson_items is None:
-            self.logger.warning(f'Failed to fetch WaniKani daily data for "{wanikani_user.username}", skipping summary')
-            return
-
-        review_count, last_review_at = review_result
-        lesson_count = len(lesson_items)
-        last_lesson_at = self._latest_lesson_at(lesson_items)
-
-        review_had_activity = review_count > 0
-        lesson_had_activity = lesson_count > 0
-        had_activity = review_had_activity or lesson_had_activity
+        had_activity = review_count > 0 or lesson_count > 0
 
         streak_broke = not had_activity and wanikani_stats.current_streak > 0
 
@@ -383,21 +382,14 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
             had_activity=had_activity,
         )
 
-        wanikani_stats.total_reviews += review_count
-        wanikani_stats.total_lessons += lesson_count
-
-        now = datetime.datetime.now(tz=datetime.UTC)
-
-        if review_had_activity:
-            wanikani_stats.last_review_at = now
-        if lesson_had_activity:
-            wanikani_stats.last_lesson_at = now
+        wanikani_stats.total_reviews_day_start = wanikani_stats.total_reviews
+        wanikani_stats.total_lessons_day_start = wanikani_stats.total_lessons
 
         summary = Summary(
             review_count=review_count,
             lesson_count=lesson_count,
-            last_review_at=last_review_at,
-            last_lesson_at=last_lesson_at,
+            last_review_at=wanikani_stats.last_review_at,
+            last_lesson_at=wanikani_stats.last_lesson_at,
             streak_broke=streak_broke,
         )
 
@@ -426,10 +418,11 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
 
         return new_current, new_longest
 
-    def _latest_review_at(self, reviews_data: T_Json) -> datetime.datetime | None:
-        last_review_at_raw = reviews_data.get("data_updated_at")
-
-        return datetime.datetime.fromisoformat(last_review_at_raw) if last_review_at_raw else None
+    def _latest_review_at(self, review_items: list[T_Json]) -> datetime.datetime | None:
+        return max(
+            (datetime.datetime.fromisoformat(item["data_updated_at"]) for item in review_items),
+            default=None,
+        )
 
     def _latest_lesson_at(self, lesson_items: list[T_Json]) -> datetime.datetime | None:
         return max(
@@ -450,10 +443,15 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
         )
 
     async def _build_update_embed(self, wanikani_user: WaniKaniUser, summary: Summary) -> Embed:
+        lessons_line = f"Lessons: **{summary.lesson_count}**"
+
+        if summary.review_count:
+            lessons_line = f"\n{lessons_line}"
+
         parts = [
-            f"Reviews: **{summary.review_count}**\n" if summary.review_count else None,
-            f"Lessons: **{summary.lesson_count}**\n" if summary.lesson_count else None,
-            f"\nLast review: <t:{int(summary.last_review_at.timestamp())}:R>" if summary.review_count and summary.last_review_at else None,
+            f"Reviews: **{summary.review_count}**" if summary.review_count else None,
+            lessons_line if summary.lesson_count else None,
+            f"\n\nLast Review: <t:{int(summary.last_review_at.timestamp())}:R>" if summary.review_count and summary.last_review_at else None,
         ]
 
         embed = Embed(
@@ -478,8 +476,8 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
             f"Reviews: **{summary.review_count}** (Total = **{stats.total_reviews}**)",
             f"\nLessons: **{summary.lesson_count}** (Total = **{stats.total_lessons}**)",
             f"\n\n{streak_line}",
-            f"\n\nLast review: <t:{int(summary.last_review_at.timestamp())}:R>" if summary.review_count and summary.last_review_at else None,
-            f"\nLast lesson: <t:{int(summary.last_lesson_at.timestamp())}:R>" if summary.lesson_count and summary.last_lesson_at else None,
+            f"\n\nLast Review: <t:{int(summary.last_review_at.timestamp())}:R>" if summary.review_count and summary.last_review_at else None,
+            f"\nLast Lesson: <t:{int(summary.last_lesson_at.timestamp())}:R>" if summary.lesson_count and summary.last_lesson_at else None,
         ]
 
         embed = Embed(color=color, title="Daily WaniKani Summary", description="".join(part for part in parts if part))
@@ -527,15 +525,29 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
 
         return data.get("data")
 
-    async def _count_reviews_since(self, api_token: str, since: datetime.datetime) -> tuple[int, datetime.datetime | None] | None:
-        self.logger.debug(f"Counting WaniKani reviews since {since.isoformat()}")
+    async def _fetch_review_statistics_since(self, api_token: str, since: datetime.datetime) -> list[T_Json] | None:
+        self.logger.debug(f"Fetching WaniKani review statistics since {since.isoformat()}")
 
-        data = await self._wanikani_get(api_token, f"{WANIKANI_BASE_URL}/reviews", params={"updated_after": since.isoformat()})
+        items = await self._paginate_wanikani(
+            api_token,
+            f"{WANIKANI_BASE_URL}/review_statistics",
+            {"updated_after": since.isoformat()},
+        )
 
-        if data is None:
+        if items is None:
             return None
 
-        return data.get("total_count", 0), self._latest_review_at(data)
+        # A review_statistic is created on a subject's first review, and a
+        # subject can't be reviewed before its lesson is completed.
+        #
+        # WaniKani's official client submits that first review as the lesson's
+        # own quiz, so a "review_statistic" created within this window is really
+        # a lesson completion not a standalone review.
+        genuine_reviews = [item for item in items if datetime.datetime.fromisoformat(item["data"]["created_at"]) < since]
+
+        self.logger.debug(f"Found {len(genuine_reviews)} WaniKani reviews since {since.isoformat()}")
+
+        return genuine_reviews
 
     async def _fetch_started_assignments_since(self, api_token: str, since: datetime.datetime) -> list[T_Json] | None:
         self.logger.debug(f"Fetching WaniKani started assignments since {since.isoformat()}")
