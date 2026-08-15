@@ -1,5 +1,4 @@
 import asyncio
-import contextlib
 import datetime
 import typing
 from zoneinfo import ZoneInfo
@@ -334,8 +333,16 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
 
         embed = await self._build_update_embed(wanikani_user, summary)
 
-        self.logger.debug(f'Posting WaniKani update for "{wanikani_user.username}" to #{channel.name}')
-        await channel.send(embed=embed)
+        wanikani_stats.last_update_message_id = await SimpleUtils.replace_tracked_message(
+            self.logger,
+            channel,
+            wanikani_stats.last_update_message_id,
+            embed,
+            description="WaniKani update",
+        )
+
+        wanikani_stats.save()
+
         self.logger.info(f'Posted WaniKani update for "{wanikani_user.username}" to #{channel.name}')
 
     async def _run_daily_summary(self) -> None:
@@ -395,19 +402,14 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
 
         embed = await self._build_daily_embed(wanikani_user, wanikani_stats, summary)
 
-        old_message_id = wanikani_stats.last_message_id
+        wanikani_stats.last_daily_message_id = await SimpleUtils.replace_tracked_message(
+            self.logger,
+            channel,
+            wanikani_stats.last_daily_message_id,
+            embed,
+            description="WaniKani daily summary",
+        )
 
-        if old_message_id:
-            self.logger.debug(f"Deleting previous WaniKani daily summary message {old_message_id}")
-
-            with contextlib.suppress(Exception):
-                await channel.get_partial_message(old_message_id).delete()
-                self.logger.debug(f"Deleted previous WaniKani daily summary message {old_message_id}")
-
-        self.logger.debug(f"Sending new WaniKani daily summary to #{channel.name}")
-        message = await channel.send(embed=embed)
-
-        wanikani_stats.last_message_id = message.id
         wanikani_stats.save()
 
         self.logger.info(f'Posted WaniKani daily summary for "{wanikani_user.username}" to #{channel.name}')
@@ -442,16 +444,32 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
             icon_url=author_icon,
         )
 
+    def _build_activity_lines(self, summary: Summary) -> tuple[str | None, str | None]:
+        last_review_at = summary.last_review_at if summary.review_count else None
+        last_lesson_at = summary.last_lesson_at if summary.lesson_count else None
+
+        last_review_line = f"\n\nLast Review: <t:{int(last_review_at.timestamp())}:R>" if last_review_at else None
+        last_lesson_line = None
+
+        if last_lesson_at:
+            lesson_prefix = "\n" if last_review_at else "\n\n"
+            last_lesson_line = f"{lesson_prefix}Last Lesson: <t:{int(last_lesson_at.timestamp())}:R>"
+
+        return last_review_line, last_lesson_line
+
     async def _build_update_embed(self, wanikani_user: WaniKaniUser, summary: Summary) -> Embed:
         lessons_line = f"Lessons: **{summary.lesson_count}**"
 
         if summary.review_count:
             lessons_line = f"\n{lessons_line}"
 
+        last_review_line, last_lesson_line = self._build_activity_lines(summary)
+
         parts = [
             f"Reviews: **{summary.review_count}**" if summary.review_count else None,
             lessons_line if summary.lesson_count else None,
-            f"\n\nLast Review: <t:{int(summary.last_review_at.timestamp())}:R>" if summary.review_count and summary.last_review_at else None,
+            last_review_line,
+            last_lesson_line,
         ]
 
         embed = Embed(
@@ -472,12 +490,14 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
         if summary.streak_broke:
             streak_line += " — Streak Broken!"
 
+        last_review_line, last_lesson_line = self._build_activity_lines(summary)
+
         parts = [
             f"Reviews: **{summary.review_count}** (Total = **{stats.total_reviews}**)",
             f"\nLessons: **{summary.lesson_count}** (Total = **{stats.total_lessons}**)",
             f"\n\n{streak_line}",
-            f"\n\nLast Review: <t:{int(summary.last_review_at.timestamp())}:R>" if summary.review_count and summary.last_review_at else None,
-            f"\nLast Lesson: <t:{int(summary.last_lesson_at.timestamp())}:R>" if summary.lesson_count and summary.last_lesson_at else None,
+            last_review_line,
+            last_lesson_line,
         ]
 
         embed = Embed(color=color, title="Daily WaniKani Summary", description="".join(part for part in parts if part))

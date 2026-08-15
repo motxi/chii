@@ -11,3 +11,8 @@ class BaseModel(Model):
 
     class Meta:
         database = database_proxy
+
+        # Only fields explicitly assigned in-memory are written on `save()`, so
+        # two tasks that load, mutate, and save the same row concurrently don't
+        # clobber each other's changes to unrelated fields.
+        only_save_dirty = True

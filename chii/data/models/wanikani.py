@@ -44,10 +44,17 @@ class WaniKaniStats(BaseModel):
         on_delete="CASCADE",
     )
 
-    last_message_id = IntegerField(null=True)
+    # Message IDs are tracked separately per task, since the hourly update and
+    # the daily summary are distinct messages that shouldn't delete each other.
+    last_update_message_id = IntegerField(null=True)
+    last_daily_message_id = IntegerField(null=True)
 
     current_streak = IntegerField(default=0)
     longest_streak = IntegerField(default=0)
+
+    # -------
+    # Reviews
+    # -------
 
     total_reviews = IntegerField(default=0)
 
@@ -56,18 +63,20 @@ class WaniKaniStats(BaseModel):
     # without re-querying the WaniKani API.
     total_reviews_day_start = IntegerField(default=0)
 
-    # `last_review_notified_at` is a cursor tracking what's already been
-    # notified about by the hourly task.
-    #
-    # `last_review_at` is also kept up to date by the hourly task (whenever new
-    # reviews are found) but is separate: it's read-only for the daily task,
-    # which uses it to recap the day rather than to decide what's new.
+    # Cursor tracking what's already been notified about by the hourly task.
     last_review_notified_at = DateTimeField(null=True)
+
+    # Kept up to date by the hourly task (whenever new reviews are found) but it
+    # is left separate. It's read-only for the daily task, which uses it to
+    # recap the day rather than to decide what's new.
     last_review_at = DateTimeField(null=True)
+
+    # -------
+    # Lessons
+    # -------
 
     total_lessons = IntegerField(default=0)
     total_lessons_day_start = IntegerField(default=0)
-
     last_lesson_notified_at = DateTimeField(null=True)
     last_lesson_at = DateTimeField(null=True)
 
