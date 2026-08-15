@@ -93,6 +93,11 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
         await self._run_daily_summary()
         self.logger.debug("WaniKani daily summary task finished")
 
+    @update_loop_task.before_loop
+    @daily_summary_task.before_loop
+    async def before_wanikani_tasks(self) -> None:
+        await self.bot.wait_until_ready()
+
     @app_commands.command(name="channel", description="Set the channel where WaniKani updates will be posted.")
     @app_commands.describe(channel="The text channel that will receive WaniKani notifications.")
     @app_commands.check(predicate=CustomChecks.is_bot_owner)

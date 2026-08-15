@@ -68,6 +68,15 @@ class ClientCog(Logger, commands.GroupCog, group_name="client"):
 
         self.logger.info(f"Listed background tasks for @{interaction.user.global_name} ({interaction.user.id})")
 
+    @app_commands.command(name="restart", description="Restart the bot process.")
+    @app_commands.check(predicate=CustomChecks.is_bot_owner)
+    async def client_restart(self, interaction: Interaction) -> None:
+        await interaction.response.send_message("Restarting the bot...", ephemeral=True)
+
+        self.logger.warning(f"Bot restart triggered by @{interaction.user.global_name} ({interaction.user.id})")
+
+        await self.bot.close()
+
     @app_commands.command(name="host", description="Show which machine the bot is currently running on.")
     @app_commands.check(predicate=CustomChecks.is_bot_owner)
     async def client_host(self, interaction: Interaction) -> None:
