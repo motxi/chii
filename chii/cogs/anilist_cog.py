@@ -1,5 +1,4 @@
 import asyncio
-import contextlib
 import datetime
 import enum
 import typing
@@ -532,22 +531,15 @@ class AniListCog(Logger, commands.GroupCog, group_name="anilist"):
         return embed
 
     async def _send_update(self, anilist_user: AniListUser, channel: TextChannel, embed: Embed) -> None:
-        old_message_id = anilist_user.last_message_id
+        anilist_user.last_message_id = await SimpleUtils.replace_tracked_message(
+            self.logger,
+            channel,
+            anilist_user.last_message_id,
+            embed,
+            description="update",
+        )
 
-        if old_message_id:
-            self.logger.debug(f"Deleting previous update message {old_message_id}")
-
-            with contextlib.suppress(Exception):
-                await channel.get_partial_message(old_message_id).delete()
-                self.logger.debug(f"Deleted previous update message {old_message_id}")
-
-        self.logger.debug(f"Sending new update message to #{channel.name}")
-        message = await channel.send(embed=embed)
-
-        anilist_user.last_message_id = message.id
         anilist_user.save()
-
-        self.logger.debug(f"Sent new update message {message.id} to #{channel.name}")
 
     def _is_consumption_activity(self, activity: T_Json) -> bool:
         status = self._extract_status(activity)
