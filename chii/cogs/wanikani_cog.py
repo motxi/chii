@@ -244,7 +244,11 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
             self.logger.debug(f'Resetting WaniKaniStats for "{wanikani_user.username}"')
             WaniKaniStats.delete().where(WaniKaniStats.wanikani_user == wanikani_user).execute()
 
-        WaniKaniStats.get_or_create(wanikani_user=wanikani_user)
+        wanikani_stats: WaniKaniStats
+        wanikani_stats, stats_created = WaniKaniStats.get_or_create(wanikani_user=wanikani_user)
+
+        if stats_created:
+            await self._seed_lifetime_totals(wanikani_stats, api_token)
 
         self.logger.info(f'Linked Discord user @{interaction.user.global_name} to WaniKani user "{wanikani_user.username}"')
 
@@ -252,6 +256,24 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
             f"Linked your account to [{wanikani_user.username}](<https://www.wanikani.com/users/{wanikani_user.username}>).",
             ephemeral=True,
         )
+
+    async def _seed_lifetime_totals(self, wanikani_stats: WaniKaniStats, api_token: str) -> None:
+        total_reviews = await self._fetch_total_review_count(api_token)
+        total_lessons = await self._fetch_total_lesson_count(api_token)
+
+        if total_reviews is None or total_lessons is None:
+            self.logger.warning("Could not fetch WaniKani lifetime totals, starting tracked totals from 0")
+            return
+
+        wanikani_stats.total_reviews = total_reviews
+        wanikani_stats.total_reviews_day_start = total_reviews
+
+        wanikani_stats.total_lessons = total_lessons
+        wanikani_stats.total_lessons_day_start = total_lessons
+
+        wanikani_stats.save()
+
+        self.logger.debug(f"Seeded WaniKani lifetime totals: {total_reviews} reviews, {total_lessons} lessons")
 
     def _get_wanikani_user(self, discord_id: int) -> WaniKaniUser | None:
         bot_user = BotUser.get_or_none(discord_id=discord_id)
@@ -540,7 +562,7 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
     async def _fetch_wanikani_user(self, api_token: str) -> T_Json | None:
         self.logger.debug("Fetching WaniKani user")
 
-        data = await self._wanikani_get(api_token, f"{WANIKANI_BASE_URL}/user")
+        data = await self._wanikani_get(api_token, url=f"{WANIKANI_BASE_URL}/user")
 
         if not data:
             self.logger.warning("Found no valid data for WaniKani user")
@@ -550,13 +572,53 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
 
         return data.get("data")
 
+    async def _fetch_total_review_count(self, api_token: str) -> int | None:
+        self.logger.debug("Fetching WaniKani lifetime review count")
+
+        # The `/reviews` endpoint is deprecated and no longer stores review
+        # data, so the lifetime review count has to be derived by summing the
+        # correct/incorrect answer counts recorded on every review_statistic.
+        items = await self._paginate_wanikani(api_token, url=f"{WANIKANI_BASE_URL}/review_statistics")
+
+        if items is None:
+            self.logger.warning("Found no valid data for WaniKani lifetime review count")
+            return None
+
+        return sum(
+            long_item["data"]["meaning_correct"]
+            + long_item["data"]["meaning_incorrect"]
+            + long_item["data"]["reading_correct"]
+            + long_item["data"]["reading_incorrect"]
+            for long_item in items
+        )
+
+    async def _fetch_total_lesson_count(self, api_token: str) -> int | None:
+        self.logger.debug("Fetching WaniKani lifetime lesson count")
+
+        data = await self._wanikani_get(
+            api_token,
+            url=f"{WANIKANI_BASE_URL}/assignments",
+            params={
+                "started": "true",
+                "per_page": 1,
+            },
+        )
+
+        if data is None:
+            self.logger.warning("Found no valid data for WaniKani lifetime lesson count")
+            return None
+
+        return data.get("total_count")
+
     async def _fetch_review_statistics_since(self, api_token: str, since: datetime.datetime) -> list[T_Json] | None:
         self.logger.debug(f"Fetching WaniKani review statistics since {since.isoformat()}")
 
         items = await self._paginate_wanikani(
             api_token,
-            f"{WANIKANI_BASE_URL}/review_statistics",
-            {"updated_after": since.isoformat()},
+            url=f"{WANIKANI_BASE_URL}/review_statistics",
+            params={
+                "updated_after": since.isoformat(),
+            },
         )
 
         if items is None:
@@ -579,8 +641,11 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
 
         items = await self._paginate_wanikani(
             api_token,
-            f"{WANIKANI_BASE_URL}/assignments",
-            {"started": "true", "updated_after": since.isoformat()},
+            url=f"{WANIKANI_BASE_URL}/assignments",
+            params={
+                "started": "true",
+                "updated_after": since.isoformat(),
+            },
         )
 
         if items is None:
@@ -603,22 +668,24 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
 
         return started_assignments
 
-    async def _paginate_wanikani(self, api_token: str, url: str, params: T_Json | None) -> list[T_Json] | None:
+    async def _paginate_wanikani(self, api_token: str, url: str, params: T_Json | None = None) -> list[T_Json] | None:
         items: list[T_Json] = []
         next_url: str | None = url
+
         request_params = params
 
         for _ in range(WANIKANI_MAX_PAGES):
             if next_url is None:
                 break
 
-            data = await self._wanikani_get(api_token, next_url, params=request_params)
+            data = await self._wanikani_get(api_token, url=next_url, params=request_params)
             request_params = None
 
             if data is None:
                 return None
 
             items.extend(data.get("data", []))
+
             next_url = data.get("pages", {}).get("next_url")
 
         return items
