@@ -1,4 +1,4 @@
-from peewee import CharField, DateTimeField, ForeignKeyField, IntegerField
+from peewee import CharField, DateTimeField, ForeignKeyField, IntegerField, JSONField
 
 from chii.data.models.base import BaseModel
 from chii.data.models.bot import BotUser
@@ -62,6 +62,20 @@ class WaniKaniStats(BaseModel):
     # derive "reviews done today" (total_reviews - total_reviews_day_start)
     # without re-querying the WaniKani API.
     total_reviews_day_start = IntegerField(default=0)
+
+    # JSON-encoded `{subject_id: answered_count}` for every subject the hourly
+    # task has ever seen for this user.
+    #
+    # The `answered_count` value is derived from the subject's
+    # "review_statistic" (see `_answered_count`), and it is used to diff
+    # successive polls, since a "review_statistic" is a running total, not an
+    # event log.
+    #
+    # A subject can be touched by the API's `updated_after` filter without a
+    # real review having happened (e.g. a hidden/content change), and comparing
+    # against this snapshot is what tells those apart from genuine review
+    # activity.
+    review_snapshot = JSONField(default=dict)
 
     # Cursor tracking what's already been notified about by the hourly task.
     last_review_notified_at = DateTimeField(null=True)
