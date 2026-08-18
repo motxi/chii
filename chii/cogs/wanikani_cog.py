@@ -149,6 +149,42 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
 
         self.logger.info(f"@{member.global_name} ({member.id})'s WaniKani linking permission revoked by @{interaction.user.global_name}")
 
+    @app_commands.command(name="streak", description="Manually set a linked user's WaniKani streak.")
+    @app_commands.describe(
+        member="The Discord user whose streak to set.",
+        current_streak="The new current streak, in days.",
+        longest_streak="The new longest streak, in days. Defaults to the higher of the existing value and current_streak.",
+    )
+    @app_commands.check(predicate=CustomChecks.is_bot_owner)
+    async def wanikani_streak(self, interaction: Interaction, member: Member, current_streak: int, longest_streak: int | None = None) -> None:
+        if current_streak < 0 or (longest_streak is not None and longest_streak < 0):
+            await interaction.response.send_message("Streaks can't be negative.", ephemeral=True)
+            return
+
+        wanikani_user = self._get_wanikani_user(member.id)
+
+        if not wanikani_user:
+            await interaction.response.send_message(f"{member.mention} hasn't linked a WaniKani account.", ephemeral=True)
+            return
+
+        wanikani_stats: WaniKaniStats
+        wanikani_stats, _ = WaniKaniStats.get_or_create(wanikani_user=wanikani_user)
+
+        wanikani_stats.current_streak = current_streak
+        wanikani_stats.longest_streak = max(longest_streak if longest_streak is not None else wanikani_stats.longest_streak, current_streak)
+
+        wanikani_stats.save()
+
+        await interaction.response.send_message(
+            f"Set {member.mention}'s WaniKani streak to **{wanikani_stats.current_streak}** (longest: **{wanikani_stats.longest_streak}**).",
+            ephemeral=True,
+        )
+
+        self.logger.info(
+            f"WaniKani streak for @{member.global_name} ({member.id}) manually set to {current_streak} "
+            f"(longest {wanikani_stats.longest_streak}) by @{interaction.user.global_name}"
+        )
+
     @app_commands.command(name="link", description="Link your own WaniKani account for tracking.")
     async def wanikani_link(self, interaction: Interaction) -> None:
         bot_user = BotUser.get_or_none(discord_id=interaction.user.id)
@@ -165,6 +201,21 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
             return
 
         await interaction.response.send_modal(WaniKaniLinkModal(self))
+
+    @app_commands.command(name="unlink", description="Unlink your own WaniKani account.")
+    async def wanikani_unlink(self, interaction: Interaction) -> None:
+        wanikani_user = self._get_wanikani_user(interaction.user.id)
+
+        if not wanikani_user:
+            await interaction.response.send_message("You haven't linked a WaniKani account yet.", ephemeral=True)
+            return
+
+        username = wanikani_user.username
+        wanikani_user.delete_instance(recursive=True)
+
+        await interaction.response.send_message(f"Unlinked your WaniKani account (**{username}**).", ephemeral=True)
+
+        self.logger.info(f'Unlinked WaniKani account "{username}" from @{interaction.user.global_name} ({interaction.user.id})')
 
     @app_commands.command(name="force", description="Manually force your own WaniKani update check.")
     async def wanikani_force(self, interaction: Interaction) -> None:

@@ -115,6 +115,64 @@ class AniListCog(Logger, commands.GroupCog, group_name="anilist"):
             self.logger.exception(f'Linking AniList user "{anilist_username}" failed')
             await interaction.followup.send("Something went wrong while linking that AniList account.", ephemeral=True)
 
+    @app_commands.command(name="unlink", description="Unlink a Discord user's AniList account.")
+    @app_commands.describe(member="The Discord user to unlink.")
+    @app_commands.check(predicate=CustomChecks.is_bot_owner)
+    async def anilist_unlink(self, interaction: Interaction, member: Member) -> None:
+        anilist_user = self._get_anilist_user(member.id)
+
+        if not anilist_user:
+            await interaction.response.send_message(f"{member.mention} doesn't have a linked AniList account.", ephemeral=True)
+            return
+
+        username = anilist_user.username
+        anilist_user.delete_instance(recursive=True)
+
+        await interaction.response.send_message(f"Unlinked {member.mention}'s AniList account (**{username}**).", ephemeral=True)
+
+        self.logger.info(f'Unlinked AniList account "{username}" from @{member.global_name} ({member.id}) by @{interaction.user.global_name}')
+
+    @app_commands.command(name="streak", description="Manually set a linked user's AniList streak.")
+    @app_commands.describe(
+        member="The Discord user whose streak to set.",
+        current_streak="The new current streak, in days.",
+        longest_streak="The new longest streak, in days. Defaults to the higher of the existing value and current_streak.",
+    )
+    @app_commands.check(predicate=CustomChecks.is_bot_owner)
+    async def anilist_streak(self, interaction: Interaction, member: Member, current_streak: int, longest_streak: int | None = None) -> None:
+        if current_streak < 0 or (longest_streak is not None and longest_streak < 0):
+            await interaction.response.send_message("Streaks can't be negative.", ephemeral=True)
+            return
+
+        anilist_user = self._get_anilist_user(member.id)
+
+        if not anilist_user:
+            await interaction.response.send_message(f"{member.mention} doesn't have a linked AniList account.", ephemeral=True)
+            return
+
+        anilist_user.current_streak = current_streak
+        anilist_user.longest_streak = max(longest_streak if longest_streak is not None else anilist_user.longest_streak, current_streak)
+
+        anilist_user.save()
+
+        await interaction.response.send_message(
+            f"Set {member.mention}'s AniList streak to **{anilist_user.current_streak}** (longest: **{anilist_user.longest_streak}**).",
+            ephemeral=True,
+        )
+
+        self.logger.info(
+            f"AniList streak for @{member.global_name} ({member.id}) manually set to {current_streak} "
+            f"(longest {anilist_user.longest_streak}) by @{interaction.user.global_name}"
+        )
+
+    def _get_anilist_user(self, discord_id: int) -> AniListUser | None:
+        bot_user = BotUser.get_or_none(discord_id=discord_id)
+
+        if not bot_user:
+            return None
+
+        return AniListUser.get_or_none(bot_user=bot_user)
+
     async def _link_anilist_account(self, interaction: Interaction, member: Member, anilist_username: str) -> None:
         anilist_user_data = await self._fetch_anilist_user(anilist_username)
 
