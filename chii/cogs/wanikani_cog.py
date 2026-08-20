@@ -495,7 +495,7 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
             self.logger.debug(f'No new WaniKani activity for "{wanikani_user.username}"')
             return
 
-        embed = await self._build_update_embed(wanikani_user, summary)
+        embed = await self._build_update_embed(wanikani_user, wanikani_stats, summary)
 
         wanikani_stats.last_update_message_id = await SimpleUtils.replace_tracked_message(
             self.logger,
@@ -637,8 +637,14 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
 
         return last_review_line, last_lesson_line
 
-    async def _build_update_embed(self, wanikani_user: WaniKaniUser, summary: Summary) -> Embed:
-        lessons_line = f"Lessons: **{summary.lesson_count}**"
+    async def _build_update_embed(self, wanikani_user: WaniKaniUser, wanikani_stats: WaniKaniStats, summary: Summary) -> Embed:
+        reviews_today_after = wanikani_stats.total_reviews - wanikani_stats.total_reviews_day_start
+        reviews_today_before = reviews_today_after - summary.review_count
+
+        lessons_today_after = wanikani_stats.total_lessons - wanikani_stats.total_lessons_day_start
+        lessons_today_before = lessons_today_after - summary.lesson_count
+
+        lessons_line = f"Lessons: **{lessons_today_before}** + **{summary.lesson_count}** = **{lessons_today_after}**"
 
         if summary.review_count:
             lessons_line = f"\n{lessons_line}"
@@ -646,7 +652,7 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
         last_review_line, last_lesson_line = self._build_activity_lines(summary)
 
         parts = [
-            f"Reviews: **{summary.review_count}**" if summary.review_count else None,
+            f"Reviews: **{reviews_today_before}** + **{summary.review_count}** = **{reviews_today_after}**" if summary.review_count else None,
             lessons_line if summary.lesson_count else None,
             last_review_line,
             last_lesson_line,
@@ -673,8 +679,8 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
         last_review_line, last_lesson_line = self._build_activity_lines(summary)
 
         parts = [
-            f"Reviews: **{summary.review_count}** (Total = **{stats.total_reviews}**)",
-            f"\nLessons: **{summary.lesson_count}** (Total = **{stats.total_lessons}**)",
+            f"Reviews: **{stats.total_reviews - summary.review_count}** + **{summary.review_count}** = **{stats.total_reviews}**",
+            f"\nLessons: **{stats.total_lessons - summary.lesson_count}** + **{summary.lesson_count}** = **{stats.total_lessons}**",
             f"\n\n{streak_line}",
             last_review_line,
             last_lesson_line,

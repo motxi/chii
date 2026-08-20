@@ -443,7 +443,9 @@ class AniListCog(Logger, commands.GroupCog, group_name="anilist"):
 
         anilist_user.last_activity_id = activity_id
 
-        if not self._sync_tracker(anilist_user, activity):
+        is_progress, old_progress = self._sync_tracker(anilist_user, activity)
+
+        if not is_progress:
             self.logger.debug(f'Activity for "{anilist_user.username}" is not real progress')
             anilist_user.save()
 
@@ -453,16 +455,16 @@ class AniListCog(Logger, commands.GroupCog, group_name="anilist"):
 
         anilist_user.save()
 
-        embed = await self._build_embed(anilist_user, activity)
+        embed = await self._build_embed(anilist_user, activity, old_progress)
 
         self.logger.debug(f'Posting AniList update for "{anilist_user.username}" to #{channel.name}')
         await self._send_update(anilist_user, channel, embed)
         self.logger.info(f'Posted AniList update for "{anilist_user.username}" to #{channel.name}')
 
-    def _sync_tracker(self, account: AniListUser, activity: T_Json) -> bool:
+    def _sync_tracker(self, account: AniListUser, activity: T_Json) -> tuple[bool, int | None]:
         if not self._is_consumption_activity(activity):
             self.logger.debug("Activity is not a consumption activity. Skipping progress check")
-            return False
+            return False, None
 
         media = activity["media"]
         new_progress = self._extract_progress(activity)
@@ -479,6 +481,8 @@ class AniListCog(Logger, commands.GroupCog, group_name="anilist"):
                 "title": media["title"]["romaji"],
             },
         )
+
+        old_progress = anilist_tracker.progress
 
         if anilist_tracker_exists:
             self.logger.debug(f"Created new AniListTracker entry for media {media['id']}")
@@ -503,14 +507,14 @@ class AniListCog(Logger, commands.GroupCog, group_name="anilist"):
             is_progress = False
 
         if not is_progress:
-            return False
+            return False, None
 
         anilist_tracker.type = media["type"]
         anilist_tracker.title = media["title"]["romaji"]
 
         anilist_tracker.save()
 
-        return True
+        return True, old_progress
 
     def _update_streak(self, anilist_user: AniListUser, timestamp: int) -> None:
         new_activity_at = datetime.datetime.fromtimestamp(timestamp, tz=datetime.UTC)
@@ -541,7 +545,7 @@ class AniListCog(Logger, commands.GroupCog, group_name="anilist"):
         anilist_user.longest_streak = max(anilist_user.longest_streak, anilist_user.current_streak)
         anilist_user.last_activity_at = new_activity_at
 
-    async def _build_embed(self, anilist_user: AniListUser, activity: T_Json) -> Embed:
+    async def _build_embed(self, anilist_user: AniListUser, activity: T_Json, old_progress: int | None) -> Embed:
         self.logger.debug(f'Building embed for "{anilist_user.username}"')
 
         media = activity["media"]
@@ -571,7 +575,7 @@ class AniListCog(Logger, commands.GroupCog, group_name="anilist"):
             streak_line = f"\n{streak_line}"
 
         parts = [
-            f"{(status.value if status else 'Unknown')}: **{progress}**" if progress else None,
+            f"{(status.value if status else 'Unknown')}: **{old_progress} → {progress}**" if progress else None,
             streak_line,
             f"\n\n[**AniList**](https://anilist.co/{media_path}/{media['id']}) | ",
             f"[**MyAnimeList**](https://myanimelist.net/{media_path}/{media['idMal']})",
