@@ -1,6 +1,6 @@
 [project]
 name = "chii"
-version = "1.3.2"
+version = "1.3.3"
 description = "Love Chii"
 
 readme = "README.md"
