@@ -29,6 +29,16 @@ class Summary(typing.NamedTuple):
     streak_broke: bool | None = None
 
 
+class ReviewEvent(typing.NamedTuple):
+    data_updated_at: datetime.datetime
+    answered_delta: int
+
+
+class ReviewStatisticsUpdate(typing.NamedTuple):
+    review_events: list[ReviewEvent]
+    updated_review_snapshot: dict[str, int]
+
+
 class WaniKaniLinkModal(ui.Modal, title="Link WaniKani Account"):
     token_info = ui.TextDisplay(content=f"Click [here]({WANIKANI_TOKEN_SETTINGS_URL}) to generate a read-only token.")
     token_label = ui.Label(
@@ -62,6 +72,9 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
     @typing.override
     async def cog_load(self) -> None:
         self.session = aiohttp.ClientSession()
+
+        await self._backfill_missing_review_snapshots()
+
         self.update_loop_task.start()
         self.daily_summary_task.start()
 
@@ -97,6 +110,16 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
     @daily_summary_task.before_loop
     async def before_wanikani_tasks(self) -> None:
         await self.bot.wait_until_ready()
+
+    @update_loop_task.error
+    async def on_update_loop_task_error(self, error: BaseException) -> None:
+        self.logger.error("Unhandled exception in WaniKani update loop task, restarting it", exc_info=error)
+        self.update_loop_task.restart()
+
+    @daily_summary_task.error
+    async def on_daily_summary_task_error(self, error: BaseException) -> None:
+        self.logger.error("Unhandled exception in WaniKani daily summary task, restarting it", exc_info=error)
+        self.daily_summary_task.restart()
 
     @app_commands.command(name="channel", description="Set the channel where WaniKani updates will be posted.")
     @app_commands.describe(channel="The text channel that will receive WaniKani notifications.")
@@ -149,6 +172,42 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
 
         self.logger.info(f"@{member.global_name} ({member.id})'s WaniKani linking permission revoked by @{interaction.user.global_name}")
 
+    @app_commands.command(name="streak", description="Manually set a linked user's WaniKani streak.")
+    @app_commands.describe(
+        member="The Discord user whose streak to set.",
+        current_streak="The new current streak, in days.",
+        longest_streak="The new longest streak, in days. Defaults to the higher of the existing value and current_streak.",
+    )
+    @app_commands.check(predicate=CustomChecks.is_bot_owner)
+    async def wanikani_streak(self, interaction: Interaction, member: Member, current_streak: int, longest_streak: int | None = None) -> None:
+        if current_streak < 0 or (longest_streak is not None and longest_streak < 0):
+            await interaction.response.send_message("Streaks can't be negative.", ephemeral=True)
+            return
+
+        wanikani_user = self._get_wanikani_user(member.id)
+
+        if not wanikani_user:
+            await interaction.response.send_message(f"{member.mention} hasn't linked a WaniKani account.", ephemeral=True)
+            return
+
+        wanikani_stats: WaniKaniStats
+        wanikani_stats, _ = WaniKaniStats.get_or_create(wanikani_user=wanikani_user)
+
+        wanikani_stats.current_streak = current_streak
+        wanikani_stats.longest_streak = max(longest_streak if longest_streak is not None else wanikani_stats.longest_streak, current_streak)
+
+        wanikani_stats.save()
+
+        await interaction.response.send_message(
+            f"Set {member.mention}'s WaniKani streak to **{wanikani_stats.current_streak}** (longest: **{wanikani_stats.longest_streak}**).",
+            ephemeral=True,
+        )
+
+        self.logger.info(
+            f"WaniKani streak for @{member.global_name} ({member.id}) manually set to {current_streak} "
+            f"(longest {wanikani_stats.longest_streak}) by @{interaction.user.global_name}"
+        )
+
     @app_commands.command(name="link", description="Link your own WaniKani account for tracking.")
     async def wanikani_link(self, interaction: Interaction) -> None:
         bot_user = BotUser.get_or_none(discord_id=interaction.user.id)
@@ -165,6 +224,21 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
             return
 
         await interaction.response.send_modal(WaniKaniLinkModal(self))
+
+    @app_commands.command(name="unlink", description="Unlink your own WaniKani account.")
+    async def wanikani_unlink(self, interaction: Interaction) -> None:
+        wanikani_user = self._get_wanikani_user(interaction.user.id)
+
+        if not wanikani_user:
+            await interaction.response.send_message("You haven't linked a WaniKani account yet.", ephemeral=True)
+            return
+
+        username = wanikani_user.username
+        wanikani_user.delete_instance(recursive=True)
+
+        await interaction.response.send_message(f"Unlinked your WaniKani account (**{username}**).", ephemeral=True)
+
+        self.logger.info(f'Unlinked WaniKani account "{username}" from @{interaction.user.global_name} ({interaction.user.id})')
 
     @app_commands.command(name="force", description="Manually force your own WaniKani update check.")
     async def wanikani_force(self, interaction: Interaction) -> None:
@@ -244,7 +318,11 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
             self.logger.debug(f'Resetting WaniKaniStats for "{wanikani_user.username}"')
             WaniKaniStats.delete().where(WaniKaniStats.wanikani_user == wanikani_user).execute()
 
-        WaniKaniStats.get_or_create(wanikani_user=wanikani_user)
+        wanikani_stats: WaniKaniStats
+        wanikani_stats, stats_created = WaniKaniStats.get_or_create(wanikani_user=wanikani_user)
+
+        if stats_created:
+            await self._seed_lifetime_totals(wanikani_stats, api_token)
 
         self.logger.info(f'Linked Discord user @{interaction.user.global_name} to WaniKani user "{wanikani_user.username}"')
 
@@ -252,6 +330,61 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
             f"Linked your account to [{wanikani_user.username}](<https://www.wanikani.com/users/{wanikani_user.username}>).",
             ephemeral=True,
         )
+
+    async def _seed_lifetime_totals(self, wanikani_stats: WaniKaniStats, api_token: str) -> None:
+        review_items = await self._fetch_all_review_statistics(api_token)
+        total_lessons = await self._fetch_total_lesson_count(api_token)
+
+        if review_items is None or total_lessons is None:
+            self.logger.warning("Could not fetch WaniKani lifetime totals, starting tracked totals from 0")
+            return
+
+        review_snapshot = {str(item["data"]["subject_id"]): self._answered_count(item["data"]) for item in review_items}
+        total_reviews = sum(review_snapshot.values())
+
+        wanikani_stats.total_reviews = total_reviews
+        wanikani_stats.total_reviews_day_start = total_reviews
+
+        wanikani_stats.total_lessons = total_lessons
+        wanikani_stats.total_lessons_day_start = total_lessons
+
+        wanikani_stats.review_snapshot = review_snapshot
+
+        wanikani_stats.save()
+
+        self.logger.debug(f"Seeded WaniKani lifetime totals: {total_reviews} reviews, {total_lessons} lessons")
+
+    async def _backfill_missing_review_snapshots(self) -> None:
+        # Users linked before `review_snapshot` existed have an empty one, so
+        # their first post-upgrade check would treat every subject as unseen
+        # and silently skip counting its next review (while still recording
+        # it for the one after) - backfilled once on startup so tracking picks
+        # up seamlessly instead of quietly missing the first review back.
+        stats_missing_snapshot = list(WaniKaniStats.select().where(WaniKaniStats.review_snapshot == {}))
+
+        if not stats_missing_snapshot:
+            return
+
+        self.logger.info(f"Backfilling WaniKani review snapshots for {len(stats_missing_snapshot)} users")
+
+        for wanikani_stats in stats_missing_snapshot:
+            try:
+                review_items = await self._fetch_all_review_statistics(wanikani_stats.wanikani_user.api_token)
+
+                if review_items is None:
+                    continue
+
+                review_snapshot = {str(item["data"]["subject_id"]): self._answered_count(item["data"]) for item in review_items}
+
+                if not review_snapshot:
+                    continue
+
+                wanikani_stats.review_snapshot = review_snapshot
+                wanikani_stats.save()
+            except Exception:
+                self.logger.exception(f'Failed to backfill WaniKani review snapshot for "{wanikani_stats.wanikani_user.username}"')
+
+        self.logger.info("Finished backfilling WaniKani review snapshots")
 
     def _get_wanikani_user(self, discord_id: int) -> WaniKaniUser | None:
         bot_user = BotUser.get_or_none(discord_id=discord_id)
@@ -280,14 +413,20 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
         self.logger.info(f"Running WaniKani update cycle for {len(wanikani_users)} users")
 
         for wanikani_user in wanikani_users:
-            await self._check_user_update(notification_channel, wanikani_user)
+            try:
+                await self._check_user_update(notification_channel, wanikani_user)
+            except Exception:
+                # One user's failure (a malformed API response, a Discord
+                # hiccup, ...) shouldn't stop the rest of the batch from being
+                # checked, nor kill the task.
+                #
+                # `tasks.Loop` only auto-retries a narrow set of connection
+                # errors and otherwise stops for good.
+                self.logger.exception(f'Failed to check WaniKani update for "{wanikani_user.username}", skipping this user')
 
         self.logger.info(f"WaniKani update cycle completed for {len(wanikani_users)} users")
 
-    async def _check_user_update(self, channel: TextChannel, wanikani_user: WaniKaniUser) -> None:
-        wanikani_stats: WaniKaniStats
-        wanikani_stats, _ = WaniKaniStats.get_or_create(wanikani_user=wanikani_user)
-
+    async def _sync_wanikani_stats(self, wanikani_stats: WaniKaniStats, wanikani_user: WaniKaniUser) -> Summary | None:
         now = datetime.datetime.now(tz=datetime.UTC)
 
         # Guard against clock skew between this host and WaniKani's servers.
@@ -299,15 +438,19 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
         review_since = wanikani_stats.last_review_notified_at or safe_now
         lesson_since = wanikani_stats.last_lesson_notified_at or safe_now
 
-        review_items = await self._fetch_review_statistics_since(wanikani_user.api_token, review_since)
+        review_snapshot: dict[str, int] = wanikani_stats.review_snapshot
+
+        review_result = await self._fetch_review_statistics_since(wanikani_user.api_token, review_since, review_snapshot)
         lesson_items = await self._fetch_started_assignments_since(wanikani_user.api_token, lesson_since)
 
-        if review_items is None or lesson_items is None:
+        if review_result is None or lesson_items is None:
             self.logger.warning(f'Failed to fetch WaniKani data for "{wanikani_user.username}", skipping this check')
-            return
+            return None
 
-        review_count = len(review_items)
-        last_review_at = self._latest_review_at(review_items)
+        review_events, updated_review_snapshot = review_result
+
+        review_count = sum(event.answered_delta for event in review_events)
+        last_review_at = max((event.data_updated_at for event in review_events), default=None)
 
         lesson_count = len(lesson_items)
         last_lesson_at = self._latest_lesson_at(lesson_items)
@@ -320,23 +463,39 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
             wanikani_stats.total_lessons += lesson_count
             wanikani_stats.last_lesson_at = last_lesson_at
 
+        # Persisted even when nothing was counted this cycle.
+        #
+        # It's how newly lessoned (or newly discovered) subjects get remembered,
+        # so the next genuine review of them can be diffed against a known
+        # baseline instead of looking like another first-time lesson quiz.
+        wanikani_stats.review_snapshot = updated_review_snapshot
+
         wanikani_stats.last_review_notified_at = now
         wanikani_stats.last_lesson_notified_at = now
 
         wanikani_stats.save()
 
-        if not review_count and not lesson_count:
-            self.logger.debug(f'No new WaniKani activity for "{wanikani_user.username}"')
-            return
-
-        summary = Summary(
+        return Summary(
             review_count=review_count,
             lesson_count=lesson_count,
             last_review_at=last_review_at,
             last_lesson_at=last_lesson_at,
         )
 
-        embed = await self._build_update_embed(wanikani_user, summary)
+    async def _check_user_update(self, channel: TextChannel, wanikani_user: WaniKaniUser) -> None:
+        wanikani_stats: WaniKaniStats
+        wanikani_stats, _ = WaniKaniStats.get_or_create(wanikani_user=wanikani_user)
+
+        summary = await self._sync_wanikani_stats(wanikani_stats, wanikani_user)
+
+        if summary is None:
+            return
+
+        if not summary.review_count and not summary.lesson_count:
+            self.logger.debug(f'No new WaniKani activity for "{wanikani_user.username}"')
+            return
+
+        embed = await self._build_update_embed(wanikani_user, wanikani_stats, summary)
 
         wanikani_stats.last_update_message_id = await SimpleUtils.replace_tracked_message(
             self.logger,
@@ -369,7 +528,10 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
         self.logger.info(f"Running WaniKani daily summary for {len(wanikani_users)} users")
 
         for wanikani_user in wanikani_users:
-            await self._process_daily_user(notification_channel, wanikani_user)
+            try:
+                await self._process_daily_user(notification_channel, wanikani_user)
+            except Exception:
+                self.logger.exception(f'Failed to build WaniKani daily summary for "{wanikani_user.username}", skipping this user')
 
         self.logger.info(f"WaniKani daily summary completed for {len(wanikani_users)} users")
 
@@ -377,10 +539,19 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
         wanikani_stats: WaniKaniStats
         wanikani_stats, _ = WaniKaniStats.get_or_create(wanikani_user=wanikani_user)
 
-        # `total_reviews`/`total_lessons`/`last_review_at`/`last_lesson_at` are
-        # kept up to date continuously by the hourly loop, so today's counts can
-        # be derived from the snapshot taken at the previous daily summary
-        # instead of re-querying the WaniKani API.
+        # Sync up to now first. `total_reviews`/`total_lessons` are otherwise
+        # only advanced by the hourly loop, which runs on its own independent
+        # schedule - a review done after its last poll but before this daily
+        # cutoff would otherwise be missing from `total_reviews` below, get
+        # excluded from today's count, and only surface once the next hourly
+        # poll (after `total_reviews_day_start` has already been reset) picks
+        # it up and reports it as a plain update misattributed to tomorrow.
+        #
+        # The result is discarded: today's counts are still derived from the
+        # totals below so the "new activity" that just got folded in isn't
+        # also separately posted as an hourly update.
+        await self._sync_wanikani_stats(wanikani_stats, wanikani_user)
+
         review_count = wanikani_stats.total_reviews - wanikani_stats.total_reviews_day_start
         lesson_count = wanikani_stats.total_lessons - wanikani_stats.total_lessons_day_start
 
@@ -425,11 +596,15 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
 
         return new_current, new_longest
 
-    def _latest_review_at(self, review_items: list[T_Json]) -> datetime.datetime | None:
-        return max(
-            (datetime.datetime.fromisoformat(item["data_updated_at"]) for item in review_items),
-            default=None,
-        )
+    def _answered_count(self, review_statistic_data: T_Json) -> int:
+        # A review always answers both the meaning and the reading together
+        # (radicals are the exception since they have no reading), so whichever
+        # side has been answered more often is the subject's true review
+        # count. Summing both would double-count ordinary kanji/vocabulary.
+        meaning_answered = review_statistic_data["meaning_correct"] + review_statistic_data["meaning_incorrect"]
+        reading_answered = review_statistic_data["reading_correct"] + review_statistic_data["reading_incorrect"]
+
+        return max(meaning_answered, reading_answered)
 
     def _latest_lesson_at(self, lesson_items: list[T_Json]) -> datetime.datetime | None:
         return max(
@@ -462,8 +637,14 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
 
         return last_review_line, last_lesson_line
 
-    async def _build_update_embed(self, wanikani_user: WaniKaniUser, summary: Summary) -> Embed:
-        lessons_line = f"Lessons: **{summary.lesson_count}**"
+    async def _build_update_embed(self, wanikani_user: WaniKaniUser, wanikani_stats: WaniKaniStats, summary: Summary) -> Embed:
+        reviews_today_after = wanikani_stats.total_reviews - wanikani_stats.total_reviews_day_start
+        reviews_today_before = reviews_today_after - summary.review_count
+
+        lessons_today_after = wanikani_stats.total_lessons - wanikani_stats.total_lessons_day_start
+        lessons_today_before = lessons_today_after - summary.lesson_count
+
+        lessons_line = f"Lessons: **{lessons_today_before}** + **{summary.lesson_count}** = **{lessons_today_after}**"
 
         if summary.review_count:
             lessons_line = f"\n{lessons_line}"
@@ -471,7 +652,7 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
         last_review_line, last_lesson_line = self._build_activity_lines(summary)
 
         parts = [
-            f"Reviews: **{summary.review_count}**" if summary.review_count else None,
+            f"Reviews: **{reviews_today_before}** + **{summary.review_count}** = **{reviews_today_after}**" if summary.review_count else None,
             lessons_line if summary.lesson_count else None,
             last_review_line,
             last_lesson_line,
@@ -498,8 +679,8 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
         last_review_line, last_lesson_line = self._build_activity_lines(summary)
 
         parts = [
-            f"Reviews: **{summary.review_count}** (Total = **{stats.total_reviews}**)",
-            f"\nLessons: **{summary.lesson_count}** (Total = **{stats.total_lessons}**)",
+            f"Reviews: **{stats.total_reviews - summary.review_count}** + **{summary.review_count}** = **{stats.total_reviews}**",
+            f"\nLessons: **{stats.total_lessons - summary.lesson_count}** + **{summary.lesson_count}** = **{stats.total_lessons}**",
             f"\n\n{streak_line}",
             last_review_line,
             last_lesson_line,
@@ -540,7 +721,7 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
     async def _fetch_wanikani_user(self, api_token: str) -> T_Json | None:
         self.logger.debug("Fetching WaniKani user")
 
-        data = await self._wanikani_get(api_token, f"{WANIKANI_BASE_URL}/user")
+        data = await self._wanikani_get(api_token, url=f"{WANIKANI_BASE_URL}/user")
 
         if not data:
             self.logger.warning("Found no valid data for WaniKani user")
@@ -550,37 +731,99 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
 
         return data.get("data")
 
-    async def _fetch_review_statistics_since(self, api_token: str, since: datetime.datetime) -> list[T_Json] | None:
+    async def _fetch_all_review_statistics(self, api_token: str) -> list[T_Json] | None:
+        self.logger.debug("Fetching all WaniKani review statistics")
+
+        # The `/reviews` endpoint is deprecated and no longer stores review
+        # data, so review activity has to be derived from `/review_statistics`
+        # instead - a running total per subject rather than an event log.
+        items = await self._paginate_wanikani(api_token, url=f"{WANIKANI_BASE_URL}/review_statistics")
+
+        if items is None:
+            self.logger.warning("Found no valid data for WaniKani review statistics")
+            return None
+
+        return items
+
+    async def _fetch_total_lesson_count(self, api_token: str) -> int | None:
+        self.logger.debug("Fetching WaniKani lifetime lesson count")
+
+        data = await self._wanikani_get(
+            api_token,
+            url=f"{WANIKANI_BASE_URL}/assignments",
+            params={
+                "started": "true",
+                "per_page": 1,
+            },
+        )
+
+        if data is None:
+            self.logger.warning("Found no valid data for WaniKani lifetime lesson count")
+            return None
+
+        return data.get("total_count")
+
+    async def _fetch_review_statistics_since(self, api_token: str, since: datetime.datetime, review_snapshot: dict[str, int]) -> ReviewStatisticsUpdate | None:
         self.logger.debug(f"Fetching WaniKani review statistics since {since.isoformat()}")
 
         items = await self._paginate_wanikani(
             api_token,
-            f"{WANIKANI_BASE_URL}/review_statistics",
-            {"updated_after": since.isoformat()},
+            url=f"{WANIKANI_BASE_URL}/review_statistics",
+            params={
+                "updated_after": since.isoformat(),
+            },
         )
 
         if items is None:
             return None
 
-        # A review_statistic is created on a subject's first review, and a
-        # subject can't be reviewed before its lesson is completed.
-        #
-        # WaniKani's official client submits that first review as the lesson's
-        # own quiz, so a "review_statistic" created within this window is really
-        # a lesson completion not a standalone review.
-        genuine_reviews = [item for item in items if datetime.datetime.fromisoformat(item["data"]["created_at"]) < since]
+        updated_review_snapshot = dict(review_snapshot)
+        review_events: list[ReviewEvent] = []
 
-        self.logger.debug(f"Found {len(genuine_reviews)} WaniKani reviews since {since.isoformat()}")
+        for item in items:
+            subject_id = str(item["data"]["subject_id"])
+            answered_count = self._answered_count(item["data"])
+            previously_answered_count = review_snapshot.get(subject_id)
 
-        return genuine_reviews
+            updated_review_snapshot[subject_id] = answered_count
+
+            # A `subject_id` missing from the snapshot hasn't been seen before,
+            # meaning this is its "review_statistic" mandatory first review.
+            #
+            # WaniKani's client submits that as the lesson's own quiz, since a
+            # subject can't be reviewed before its lesson is completed, so it's
+            # already accounted for via `/assignments` and shouldn't be counted
+            # again here.
+            #
+            # It's still recorded above so a real, later review of it has a
+            # baseline to diff against.
+            if previously_answered_count is None:
+                continue
+
+            # `updated_after` only guarantees the record changed, not that a
+            # review caused it (e.g. a subject being hidden touches it too),
+            # so the actual review count is the diff against the last known
+            # answered count rather than the number of records returned.
+            answered_delta = answered_count - previously_answered_count
+
+            if answered_delta > 0:
+                review_events.append(ReviewEvent(datetime.datetime.fromisoformat(item["data_updated_at"]), answered_delta))
+
+        review_count = sum(event.answered_delta for event in review_events)
+        self.logger.debug(f"Found {review_count} WaniKani reviews since {since.isoformat()}")
+
+        return ReviewStatisticsUpdate(review_events, updated_review_snapshot)
 
     async def _fetch_started_assignments_since(self, api_token: str, since: datetime.datetime) -> list[T_Json] | None:
         self.logger.debug(f"Fetching WaniKani started assignments since {since.isoformat()}")
 
         items = await self._paginate_wanikani(
             api_token,
-            f"{WANIKANI_BASE_URL}/assignments",
-            {"started": "true", "updated_after": since.isoformat()},
+            url=f"{WANIKANI_BASE_URL}/assignments",
+            params={
+                "started": "true",
+                "updated_after": since.isoformat(),
+            },
         )
 
         if items is None:
@@ -603,22 +846,24 @@ class WaniKaniCog(Logger, commands.GroupCog, group_name="wanikani"):
 
         return started_assignments
 
-    async def _paginate_wanikani(self, api_token: str, url: str, params: T_Json | None) -> list[T_Json] | None:
+    async def _paginate_wanikani(self, api_token: str, url: str, params: T_Json | None = None) -> list[T_Json] | None:
         items: list[T_Json] = []
         next_url: str | None = url
+
         request_params = params
 
         for _ in range(WANIKANI_MAX_PAGES):
             if next_url is None:
                 break
 
-            data = await self._wanikani_get(api_token, next_url, params=request_params)
+            data = await self._wanikani_get(api_token, url=next_url, params=request_params)
             request_params = None
 
             if data is None:
                 return None
 
             items.extend(data.get("data", []))
+
             next_url = data.get("pages", {}).get("next_url")
 
         return items

@@ -62,10 +62,12 @@ async def main() -> None:
     logger.info("Starting bot main loop")
 
     async with bot:
-        await load_cogs()
-
+        logger.debug("Initializing database")
         Database.initialize()
         Database.create_tables()
+        logger.debug("Database initialized successfully")
+
+        await load_cogs()
 
         logger.info("Starting bot")
 
