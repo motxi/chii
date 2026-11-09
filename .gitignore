@@ -1,0 +1,17 @@
+# Python
+*.py[oc]
+
+.venv/
+.cache/
+__pycache__/
+
+# Editors
+.vscode/
+.zed/
+
+# Secrets
+*.db
+
+.env
+.env.*
+!.env.example

@@ -1,0 +1,37 @@
+[project]
+name = "chii"
+version = "1.0.0"
+description = "Love Chii"
+readme = "README.md"
+license = "ISC"
+license-files = ["LICENSE.md"]
+requires-python = ">=3.14"
+dependencies = [
+    "aiosqlite>=0.22.1",
+    "discord-py>=2.7.1",
+    "python-dotenv>=1.2.4",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.17.4",
+]
+
+[tool.ruff]
+line-length = 120
+cache-dir = ".cache/ruff"
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "ANN003", # missing-type-kwargs
+    "CPY001", # missing-copyright-notice
+    "D100", # undocumented-public-module
+    "D101", # undocumented-public-class
+    "D102", # undocumented-public-method
+    "D103", # undocumented-public-function
+    "D104", # undocumented-public-package
+    "D107", # undocumented-public-init
+    "T201", # print
+    "TRY003", # raise-vanilla-args
+]
