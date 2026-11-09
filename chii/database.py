@@ -11,10 +11,10 @@ if TYPE_CHECKING:
 
 class Database:
     def __init__(self, database: str = "chii.db") -> None:
-        self.database = str(Config.DATA_PATH / database)
+        self.database = str(Config.DATA_PATH / "db" / database)
         self._connection: aiosqlite.Connection | None = None
 
-        Config.DATA_PATH.mkdir(parents=True, exist_ok=True)
+        (Config.DATA_PATH / "db").mkdir(parents=True, exist_ok=True)
 
     @property
     def connection(self) -> aiosqlite.Connection:

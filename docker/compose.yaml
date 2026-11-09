@@ -8,7 +8,6 @@ services:
 
     volumes:
       # Host-side path (left of the colon) can be whatever you want.
-      # The container-side path must stay as "/data".
-      - ./volumes/chii/data:/data
+      - ./volumes/chii/data:/app/chii/data/db
 
     restart: unless-stopped
