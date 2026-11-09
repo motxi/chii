@@ -25,16 +25,24 @@ class Chii(commands.Bot):
         else:
             print("Could not get bot user")
 
-        if Config.TEST_MODE and Config.TEST_GUILD:
-            print("Testing mode is enabled")
+        guild = discord.Object(id=Config.TEST_GUILD) if Config.TEST_GUILD else None
 
-            guild = discord.Object(id=Config.TEST_GUILD)
+        if guild:
+            # Always start the test guild from a clean state.
+            self.tree.clear_commands(guild=guild)
+
+        if guild and Config.TEST_MODE:
+            print("Testing mode is enabled")
 
             self.tree.copy_global_to(guild=guild)
 
             await self.tree.sync(guild=guild)
             print(f"Synced application commands to guild {Config.TEST_GUILD}")
         else:
+            if guild:
+                # Push an empty set which deletes any old guild-only copies.
+                await self.tree.sync(guild=guild)
+
             await self.tree.sync()
             print("Synced application commands globally")
 
